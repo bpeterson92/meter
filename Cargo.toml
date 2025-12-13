@@ -1,0 +1,11 @@
+[package]
+name = "meter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rusqlite = { version = "0.30", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
