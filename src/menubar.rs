@@ -8,6 +8,8 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager,
     hotkey::{Code, HotKey, Modifiers},
 };
+use objc2::MainThreadMarker;
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use tao::{
     event::Event,
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -22,6 +24,14 @@ mod models;
 
 use db::Db;
 use models::Entry;
+
+/// Hide the app from the Dock and app switcher (menu bar only)
+fn set_activation_policy_accessory() {
+    // Safety: This is called from the main thread at app startup
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+}
 
 enum UserEvent {
     TrayIconEvent(tray_icon::TrayIconEvent),
@@ -76,6 +86,29 @@ fn format_duration(seconds: i64) -> String {
 }
 
 fn main() {
+    // Daemonize: fork and detach from terminal
+    // Pass --no-fork to skip (useful for debugging)
+    if !std::env::args().any(|arg| arg == "--no-fork") {
+        unsafe {
+            let pid = libc::fork();
+            if pid < 0 {
+                eprintln!("Failed to fork");
+                std::process::exit(1);
+            }
+            if pid > 0 {
+                // Parent process exits immediately
+                println!("Meter menubar started (pid: {})", pid);
+                std::process::exit(0);
+            }
+            // Child process continues
+            // Create new session to detach from terminal
+            libc::setsid();
+        }
+    }
+
+    // Hide from Dock and app switcher - MUST be set before event loop is created
+    set_activation_policy_accessory();
+
     let home = env::var("HOME").expect("HOME not set");
     let db_path = format!("{}/.meter/db.sqlite", home);
     let db = Db::new(&db_path).expect("Failed to open DB");
@@ -83,6 +116,9 @@ fn main() {
     models::init_projects_db(db.conn()).expect("Failed to init projects DB");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+
+    // Re-apply activation policy after event loop creation (tao may reset it)
+    set_activation_policy_accessory();
 
     // Set up global hotkey (Cmd+Shift+T)
     let hotkey_manager = GlobalHotKeyManager::new().expect("Failed to create hotkey manager");
@@ -152,6 +188,10 @@ fn main() {
 
         match event {
             Event::NewEvents(tao::event::StartCause::Init) => {
+                // Hide from Dock/Cmd+Tab - must be set here AFTER tao initializes
+                // (tao/winit sets activation policy to Regular on startup, overriding LSUIElement)
+                set_activation_policy_accessory();
+
                 // Check for active timer on startup
                 current_entry = db.get_active_entry().unwrap_or(None);
                 let is_running = current_entry.is_some();
