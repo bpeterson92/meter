@@ -176,28 +176,34 @@ fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
                 has_rates = true;
                 let cost = hours * rate;
                 lines.push(Line::from(format!(
-                    "  {}: {:.2} hrs x {}{:.2} = {}{:.2}",
+                    "  {:<15} | {:>6.2} hrs x {}{:.2} = {}{:.2}",
                     project, hours, currency, rate, currency, cost
                 )));
                 total_cost += cost;
             } else {
-                lines.push(Line::from(format!("  {}: {:.2} hrs", project, hours)));
+                lines.push(Line::from(format!(
+                    "  {:<15} | {:>6.2} hrs",
+                    project, hours
+                )));
             }
             total_hours += hours;
         }
         lines.push(Line::from(""));
-        lines.push(Line::from("  ----------------"));
-        lines.push(Line::from(Span::styled(
-            format!("  Total: {:.2} hrs", total_hours),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )));
+        lines.push(Line::from(
+            "  ==================================================",
+        ));
         if has_rates {
             lines.push(Line::from(Span::styled(
-                format!("  Total Cost: ${:.2}", total_cost),
+                format!("  Total: {:>6.2} hrs | ${:.2}", total_hours, total_cost),
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("  Total: {:>6.2} hrs", total_hours),
+                Style::default()
+                    .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             )));
         }

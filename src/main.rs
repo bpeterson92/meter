@@ -184,10 +184,14 @@ fn main() {
                 }
             }
 
-            let file_path = format!("{}/invoice_{}_{}.txt", home, year, month);
+            let invoice_dir = format!("{}/meter/invoices", home);
+            std::fs::create_dir_all(&invoice_dir).ok();
+    
+            let file_path = format!("{}/invoice_{}_{:02}.txt", invoice_dir, year, month);
+            
             let mut file = File::create(&file_path).expect("Failed to create invoice file");
             writeln!(file, "Invoice for {}-{:02}", year, month).unwrap();
-            writeln!(file, "=================").unwrap();
+            writeln!(file, "=========================").unwrap();
             writeln!(file).unwrap();
 
             let mut total_hours = 0.0;
@@ -222,7 +226,7 @@ fn main() {
 
                         writeln!(
                             file,
-                            "  {} | {} - {} | {:.2} hrs",
+                            "  {:<20} | {} - {} | {:>6.2} hrs",
                             entry.description,
                             start_local.format("%Y-%m-%d %H:%M"),
                             end_local.format("%Y-%m-%d %H:%M"),
@@ -238,21 +242,22 @@ fn main() {
                     let project_cost = project_total * r;
                     writeln!(
                         file,
-                        "  Subtotal: {:.2} hrs x {}{:.2} = {}{:.2}",
+                        "  Subtotal: {:>6.2} hrs x {}{:.2} = {}{:.2}",
                         project_total, currency, r, currency, project_cost
                     )
                     .unwrap();
                     total_cost += project_cost;
                 } else {
-                    writeln!(file, "  Subtotal: {:.2} hrs", project_total).unwrap();
+                    writeln!(file, "  Subtotal: {:>6.2} hrs", project_total).unwrap();
                 }
                 writeln!(file).unwrap();
                 total_hours += project_total;
             }
-            writeln!(file, "{}", "=".repeat(40)).unwrap();
-            writeln!(file, "Total Hours: {:.2}", total_hours).unwrap();
+            writeln!(file, "{}", "=".repeat(50)).unwrap();
             if has_any_rates {
-                writeln!(file, "Total Cost: ${:.2}", total_cost).unwrap();
+                writeln!(file, "Total: {:>6.2} hrs | ${:.2}", total_hours, total_cost).unwrap();
+            } else {
+                writeln!(file, "Total: {:>6.2} hrs", total_hours).unwrap();
             }
 
             println!("Invoice written to {}", file_path);

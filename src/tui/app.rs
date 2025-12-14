@@ -749,14 +749,30 @@ impl App {
             InvoiceMode::SelectEntries => (now.year(), now.month()),
         };
 
-        let file_path = format!("{}/invoice_{}_{:02}.txt", home, year, month);
+        // Ensure the directory exists
+        let invoice_dir = format!("{}/meter/invoices", home);
+        std::fs::create_dir_all(&invoice_dir).ok();
+
+        let file_path = format!("{}/invoice_{}_{:02}.txt", invoice_dir, year, month);
 
         let mut content = format!("Invoice for {}-{:02}\n", year, month);
-        content.push_str("=================\n\n");
+        content.push_str("=========================\n\n");
 
-        let mut total = 0.0;
+        let mut total_hours = 0.0;
+        let mut total_cost = 0.0;
+        let mut has_any_rates = false;
+
         for (project, proj_entries) in &entries_by_project {
+            // Get project rate from cache
+            let rate_info = self.project_rates.get(project);
+            if rate_info.is_some() {
+                has_any_rates = true;
+            }
+
             content.push_str(&format!("Project: {}\n", project));
+            if let Some((rate, currency)) = rate_info {
+                content.push_str(&format!("Rate: {}{:.2}/hr\n", currency, rate));
+            }
             content.push_str(&format!("{}\n", "-".repeat(40)));
 
             let mut project_total = 0.0;
@@ -767,7 +783,7 @@ impl App {
                     let end_local = Local.from_utc_datetime(&end.naive_utc());
 
                     content.push_str(&format!(
-                        "  {} | {} - {} | {:.2} hrs\n",
+                        "  {:<24} | {} - {} | {:>6.2} hrs\n",
                         entry.description,
                         start_local.format("%Y-%m-%d %H:%M"),
                         end_local.format("%Y-%m-%d %H:%M"),
@@ -776,11 +792,29 @@ impl App {
                     project_total += hours;
                 }
             }
-            content.push_str(&format!("  Subtotal: {:.2} hrs\n\n", project_total));
-            total += project_total;
+
+            // Project subtotal with cost if rate exists
+            if let Some((rate, currency)) = rate_info {
+                let project_cost = project_total * rate;
+                content.push_str(&format!(
+                    "  Subtotal: {:>6.2} hrs x {}{:.2} = {}{:.2}\n\n",
+                    project_total, currency, rate, currency, project_cost
+                ));
+                total_cost += project_cost;
+            } else {
+                content.push_str(&format!("  Subtotal: {:>6.2} hrs\n\n", project_total));
+            }
+            total_hours += project_total;
         }
-        content.push_str(&format!("{}\n", "=".repeat(40)));
-        content.push_str(&format!("Total: {:.2} hrs\n", total));
+        content.push_str(&format!("{}\n", "=".repeat(50)));
+        if has_any_rates {
+            content.push_str(&format!(
+                "Total: {:>6.2} hrs | ${:.2}\n",
+                total_hours, total_cost
+            ));
+        } else {
+            content.push_str(&format!("Total: {:>6.2} hrs\n", total_hours));
+        }
 
         if std::fs::write(&file_path, content).is_ok() {
             self.status_message = Some(format!("Invoice written to {}", file_path));
