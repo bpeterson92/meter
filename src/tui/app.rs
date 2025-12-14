@@ -38,6 +38,21 @@ pub enum InputMode {
     Normal,
     EditingProject,
     EditingDescription,
+    // Entry editing modes
+    EditEntryProject,
+    EditEntryDescription,
+    EditEntryStart,
+    EditEntryEnd,
+}
+
+/// Which field is selected in the edit entry dialog
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum EditField {
+    #[default]
+    Project,
+    Description,
+    Start,
+    End,
 }
 
 /// Main application state
@@ -58,6 +73,14 @@ pub struct App {
     pub selected_entry_index: usize,
     pub show_only_unbilled: bool,
     pub confirm_delete: Option<i64>,
+
+    // Edit entry state
+    pub editing_entry: Option<Entry>,
+    pub edit_field: EditField,
+    pub edit_project_input: String,
+    pub edit_description_input: String,
+    pub edit_start_input: String,
+    pub edit_end_input: String,
 
     // Invoice state
     pub invoice_mode: InvoiceMode,
@@ -97,6 +120,15 @@ pub enum Message {
     CancelDelete,
     MarkEntryBilled(i64),
     UnbillEntry(i64),
+
+    // Edit entry actions
+    EditEntry(i64),
+    EditNextField,
+    EditPrevField,
+    EditFieldInput(char),
+    EditFieldBackspace,
+    SaveEditEntry,
+    CancelEditEntry,
 
     // Invoice actions
     NextInvoiceMode,
@@ -233,6 +265,132 @@ impl App {
             }
             Message::CancelDelete => {
                 self.confirm_delete = None;
+                None
+            }
+
+            // Edit entry
+            Message::EditEntry(id) => {
+                if let Some(entry) = self.entries.iter().find(|e| e.id == id) {
+                    self.editing_entry = Some(entry.clone());
+                    self.edit_field = EditField::Project;
+                    self.edit_project_input = entry.project.clone();
+                    self.edit_description_input = entry.description.clone();
+
+                    let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
+                    self.edit_start_input = start_local.format("%Y-%m-%d %H:%M").to_string();
+
+                    self.edit_end_input = match entry.end {
+                        Some(end) => {
+                            let end_local = Local.from_utc_datetime(&end.naive_utc());
+                            end_local.format("%Y-%m-%d %H:%M").to_string()
+                        }
+                        None => String::new(),
+                    };
+
+                    self.input_mode = InputMode::EditEntryProject;
+                }
+                None
+            }
+            Message::EditNextField => {
+                self.edit_field = match self.edit_field {
+                    EditField::Project => EditField::Description,
+                    EditField::Description => EditField::Start,
+                    EditField::Start => EditField::End,
+                    EditField::End => EditField::Project,
+                };
+                self.input_mode = match self.edit_field {
+                    EditField::Project => InputMode::EditEntryProject,
+                    EditField::Description => InputMode::EditEntryDescription,
+                    EditField::Start => InputMode::EditEntryStart,
+                    EditField::End => InputMode::EditEntryEnd,
+                };
+                None
+            }
+            Message::EditPrevField => {
+                self.edit_field = match self.edit_field {
+                    EditField::Project => EditField::End,
+                    EditField::Description => EditField::Project,
+                    EditField::Start => EditField::Description,
+                    EditField::End => EditField::Start,
+                };
+                self.input_mode = match self.edit_field {
+                    EditField::Project => InputMode::EditEntryProject,
+                    EditField::Description => InputMode::EditEntryDescription,
+                    EditField::Start => InputMode::EditEntryStart,
+                    EditField::End => InputMode::EditEntryEnd,
+                };
+                None
+            }
+            Message::EditFieldInput(c) => {
+                match self.edit_field {
+                    EditField::Project => self.edit_project_input.push(c),
+                    EditField::Description => self.edit_description_input.push(c),
+                    EditField::Start => self.edit_start_input.push(c),
+                    EditField::End => self.edit_end_input.push(c),
+                }
+                None
+            }
+            Message::EditFieldBackspace => {
+                match self.edit_field {
+                    EditField::Project => {
+                        self.edit_project_input.pop();
+                    }
+                    EditField::Description => {
+                        self.edit_description_input.pop();
+                    }
+                    EditField::Start => {
+                        self.edit_start_input.pop();
+                    }
+                    EditField::End => {
+                        self.edit_end_input.pop();
+                    }
+                }
+                None
+            }
+            Message::SaveEditEntry => {
+                if let Some(mut entry) = self.editing_entry.take() {
+                    entry.project = self.edit_project_input.clone();
+                    entry.description = self.edit_description_input.clone();
+
+                    // Parse start time
+                    if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(
+                        &self.edit_start_input,
+                        "%Y-%m-%d %H:%M",
+                    ) {
+                        entry.start = Local
+                            .from_local_datetime(&parsed)
+                            .single()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or(entry.start);
+                    }
+
+                    // Parse end time
+                    if self.edit_end_input.is_empty() {
+                        entry.end = None;
+                    } else if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(
+                        &self.edit_end_input,
+                        "%Y-%m-%d %H:%M",
+                    ) {
+                        entry.end = Local
+                            .from_local_datetime(&parsed)
+                            .single()
+                            .map(|dt| dt.with_timezone(&Utc));
+                    }
+
+                    if db.update_entry(&entry).is_ok() {
+                        self.status_message = Some(format!("Entry {} updated", entry.id));
+                    } else {
+                        self.status_message = Some("Failed to update entry".to_string());
+                    }
+                }
+                self.input_mode = InputMode::Normal;
+                self.edit_field = EditField::Project;
+                Some(Message::RefreshEntries)
+            }
+            Message::CancelEditEntry => {
+                self.editing_entry = None;
+                self.input_mode = InputMode::Normal;
+                self.edit_field = EditField::Project;
                 None
             }
 

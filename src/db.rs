@@ -215,7 +215,7 @@ impl Db {
             .execute("UPDATE entries SET billed = 1 WHERE id = ?1", params![id])?;
         Ok(rows_affected > 0)
     }
-    
+
     /// Mark an entry as unbilled.
     pub fn unmark_billed(&self, id: i64) -> Result<bool> {
         let rows_affected = self
@@ -224,4 +224,19 @@ impl Db {
         Ok(rows_affected > 0)
     }
 
+    /// Update an entry's fields.
+    pub fn update_entry(&self, entry: &Entry) -> Result<bool> {
+        let rows_affected = self.conn.execute(
+            "UPDATE entries SET project = ?1, description = ?2, start = ?3, end = ?4, billed = ?5 WHERE id = ?6",
+            params![
+                entry.project,
+                entry.description,
+                entry.start.to_rfc3339(),
+                entry.end.map(|e| e.to_rfc3339()),
+                if entry.billed { 1 } else { 0 },
+                entry.id,
+            ],
+        )?;
+        Ok(rows_affected > 0)
+    }
 }

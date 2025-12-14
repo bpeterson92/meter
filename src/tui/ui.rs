@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::app::{App, Screen};
+use super::app::{App, EditField, Screen};
 use super::views::{draw_entries, draw_invoice, draw_timer};
 
 /// Main draw function that delegates to screen-specific views
@@ -38,6 +38,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Draw delete confirmation if active
     if app.confirm_delete.is_some() {
         draw_delete_confirm(frame, app);
+    }
+
+    // Draw edit entry dialog if active
+    if app.editing_entry.is_some() {
+        draw_edit_entry(frame, app);
     }
 }
 
@@ -95,7 +100,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 "[s] Start timer  [?] Help  [q] Quit"
             }
         }
-        Screen::Entries => "[j/k] Navigate  [d] Delete  [b] Bill  [u] Unbill  [f] Filter  [?] Help  [q] Quit",
+        Screen::Entries => {
+            "[j/k] Navigate  [e] Edit  [d] Delete  [b] Bill  [u] Unbill  [f] Filter  [?] Help  [q] Quit"
+        }
         Screen::Invoice => "[j/k] Select  [Enter] Generate  [?] Help  [q] Quit",
     };
 
@@ -152,8 +159,10 @@ fn draw_help_overlay(frame: &mut Frame, _app: &App) {
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from("  j/k      - Navigate up/down"),
+        Line::from("  e        - Edit entry"),
         Line::from("  d        - Delete entry"),
         Line::from("  b        - Mark as billed"),
+        Line::from("  u        - Unbill entry"),
         Line::from("  f        - Toggle filter"),
         Line::from(""),
         Line::from(Span::styled(
@@ -208,6 +217,81 @@ fn draw_delete_confirm(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(confirm, area);
+}
+
+fn draw_edit_entry(frame: &mut Frame, app: &App) {
+    let area = centered_rect(60, 50, frame.area());
+
+    let entry_id = app.editing_entry.as_ref().map(|e| e.id).unwrap_or(0);
+
+    let field_style = |field: EditField| -> Style {
+        if app.edit_field == field {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        }
+    };
+
+    let cursor = |field: EditField| -> &str { if app.edit_field == field { "_" } else { "" } };
+
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Project:     ", field_style(EditField::Project)),
+            Span::styled(
+                format!("{}{}", app.edit_project_input, cursor(EditField::Project)),
+                field_style(EditField::Project),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Description: ", field_style(EditField::Description)),
+            Span::styled(
+                format!(
+                    "{}{}",
+                    app.edit_description_input,
+                    cursor(EditField::Description)
+                ),
+                field_style(EditField::Description),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Start:       ", field_style(EditField::Start)),
+            Span::styled(
+                format!("{}{}", app.edit_start_input, cursor(EditField::Start)),
+                field_style(EditField::Start),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  End:         ", field_style(EditField::End)),
+            Span::styled(
+                format!("{}{}", app.edit_end_input, cursor(EditField::End)),
+                field_style(EditField::End),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Tab] Next field  [Enter] Save  [Esc] Cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let edit_dialog = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Edit Entry {} ", entry_id))
+                .style(Style::default().fg(Color::Cyan)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(edit_dialog, area);
 }
 
 /// Helper to create a centered rectangle

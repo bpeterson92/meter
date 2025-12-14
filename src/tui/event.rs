@@ -45,6 +45,20 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
                 _ => None,
             };
         }
+        InputMode::EditEntryProject
+        | InputMode::EditEntryDescription
+        | InputMode::EditEntryStart
+        | InputMode::EditEntryEnd => {
+            return match key.code {
+                KeyCode::Enter => Some(Message::SaveEditEntry),
+                KeyCode::Esc => Some(Message::CancelEditEntry),
+                KeyCode::Tab => Some(Message::EditNextField),
+                KeyCode::BackTab => Some(Message::EditPrevField),
+                KeyCode::Backspace => Some(Message::EditFieldBackspace),
+                KeyCode::Char(c) => Some(Message::EditFieldInput(c)),
+                _ => None,
+            };
+        }
         InputMode::Normal => {}
     }
 
@@ -96,6 +110,13 @@ fn handle_entries_keys(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::SelectNextEntry),
         KeyCode::Char('k') | KeyCode::Up => Some(Message::SelectPreviousEntry),
+        KeyCode::Char('e') | KeyCode::Char('E') => {
+            if let Some(entry) = app.get_selected_entry() {
+                Some(Message::EditEntry(entry.id))
+            } else {
+                None
+            }
+        }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             if let Some(entry) = app.get_selected_entry() {
                 Some(Message::DeleteEntry(entry.id))
