@@ -165,9 +165,9 @@ fn main() {
     // Re-apply activation policy after event loop creation (tao may reset it)
     set_activation_policy_accessory();
 
-    // Set up global hotkey (Cmd+Shift+T)
+    // Set up global hotkey (Cmd+Control+T)
     let hotkey_manager = GlobalHotKeyManager::new().expect("Failed to create hotkey manager");
-    let hotkey = HotKey::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyT);
+    let hotkey = HotKey::new(Some(Modifiers::META | Modifiers::CONTROL), Code::KeyT);
     let hotkey_id = hotkey.id();
     hotkey_manager
         .register(hotkey)

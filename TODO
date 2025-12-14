@@ -6,3 +6,4 @@
 [ ] Fix: TUI Invoice menu latches on Select Specific Entries
     - Use Left/Right arrow keys to dive into the submenu
 [ ] Remove: j/k navigation in TUI, arrow keys work fine...
+[ ] Global hotkey does not trigger Start correctly (momentary vs latchnig)
