@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
 use clap::Parser;
 use std::env;
 use std::fs::File;
@@ -166,12 +166,16 @@ fn main() {
             let month = month.unwrap_or(Utc::now().month() as u32);
             let year = year.unwrap_or(Utc::now().year());
 
-            let mut project_map = std::collections::HashMap::new();
+            // Group entries by project
+            let mut entries_by_project: std::collections::HashMap<String, Vec<Entry>> =
+                std::collections::HashMap::new();
             for e in entries {
                 let end = e.end.unwrap_or(Utc::now());
                 if end.year() == year as i32 && end.month() == month {
-                    let hrs = (end - e.start).num_seconds() as f64 / 3600.0;
-                    *project_map.entry(e.project.clone()).or_insert(0.0) += hrs;
+                    entries_by_project
+                        .entry(e.project.clone())
+                        .or_insert_with(Vec::new)
+                        .push(e);
                 }
             }
 
@@ -179,13 +183,37 @@ fn main() {
             let mut file = File::create(&file_path).expect("Failed to create invoice file");
             writeln!(file, "Invoice for {}-{:02}", year, month).unwrap();
             writeln!(file, "=================").unwrap();
+            writeln!(file).unwrap();
 
             let mut total = 0.0;
-            for (proj, hrs) in &project_map {
-                writeln!(file, "{}: {:.2} hrs", proj, hrs).unwrap();
-                total += hrs;
+            for (project, proj_entries) in &entries_by_project {
+                writeln!(file, "Project: {}", project).unwrap();
+                writeln!(file, "{}", "-".repeat(40)).unwrap();
+
+                let mut project_total = 0.0;
+                for entry in proj_entries {
+                    if let Some(end) = entry.end {
+                        let hours = (end - entry.start).num_seconds() as f64 / 3600.0;
+                        let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
+                        let end_local = Local.from_utc_datetime(&end.naive_utc());
+
+                        writeln!(
+                            file,
+                            "  {} | {} - {} | {:.2} hrs",
+                            entry.description,
+                            start_local.format("%Y-%m-%d %H:%M"),
+                            end_local.format("%Y-%m-%d %H:%M"),
+                            hours
+                        )
+                        .unwrap();
+                        project_total += hours;
+                    }
+                }
+                writeln!(file, "  Subtotal: {:.2} hrs", project_total).unwrap();
+                writeln!(file).unwrap();
+                total += project_total;
             }
-            writeln!(file, "----------------").unwrap();
+            writeln!(file, "{}", "=".repeat(40)).unwrap();
             writeln!(file, "Total: {:.2} hrs", total).unwrap();
 
             println!("Invoice written to {}", file_path);

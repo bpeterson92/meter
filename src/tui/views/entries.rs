@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone};
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -15,25 +16,40 @@ pub fn draw_entries(frame: &mut Frame, app: &App, area: Rect) {
         "Filter: All"
     };
 
-    let header_cells = ["ID", "Project", "Description", "Duration", "Status"]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+    let header_cells = [
+        "ID",
+        "Project",
+        "Description",
+        "Start",
+        "End",
+        "Duration",
+        "Status",
+    ]
+    .iter()
+    .map(|h| {
+        Cell::from(*h).style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
 
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
     let rows = app.entries.iter().enumerate().map(|(i, entry)| {
-        let duration = match entry.end {
+        let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
+        let start_str = start_local.format("%m/%d %H:%M").to_string();
+
+        let (end_str, duration) = match entry.end {
             Some(end) => {
+                let end_local = Local.from_utc_datetime(&end.naive_utc());
                 let hrs = (end - entry.start).num_seconds() as f64 / 3600.0;
-                format!("{:.2}h", hrs)
+                (
+                    end_local.format("%m/%d %H:%M").to_string(),
+                    format!("{:.2}h", hrs),
+                )
             }
-            None => "running".to_string(),
+            None => ("--".to_string(), "running".to_string()),
         };
 
         let status = if entry.end.is_none() {
@@ -55,7 +71,9 @@ pub fn draw_entries(frame: &mut Frame, app: &App, area: Rect) {
         let cells = vec![
             Cell::from(entry.id.to_string()),
             Cell::from(entry.project.clone()),
-            Cell::from(truncate_string(&entry.description, 30)),
+            Cell::from(truncate_string(&entry.description, 20)),
+            Cell::from(start_str),
+            Cell::from(end_str),
             Cell::from(duration),
             Cell::from(Span::styled(status, status_style)),
         ];
@@ -74,8 +92,10 @@ pub fn draw_entries(frame: &mut Frame, app: &App, area: Rect) {
 
     let widths = [
         Constraint::Length(6),
-        Constraint::Percentage(20),
-        Constraint::Percentage(40),
+        Constraint::Percentage(15),
+        Constraint::Percentage(25),
+        Constraint::Length(12),
+        Constraint::Length(12),
         Constraint::Length(10),
         Constraint::Length(10),
     ];

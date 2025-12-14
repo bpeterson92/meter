@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, NaiveDate, Timelike, Utc};
+use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
 use std::collections::HashMap;
 
 use crate::db::Db;
@@ -435,13 +435,13 @@ impl App {
                 .collect(),
         };
 
-        // Calculate totals by project
-        let mut project_hours: HashMap<String, f64> = HashMap::new();
+        // Group entries by project
+        let mut entries_by_project: HashMap<String, Vec<&Entry>> = HashMap::new();
         for entry in &entries {
-            if let Some(end) = entry.end {
-                let hours = (end - entry.start).num_seconds() as f64 / 3600.0;
-                *project_hours.entry(entry.project.clone()).or_insert(0.0) += hours;
-            }
+            entries_by_project
+                .entry(entry.project.clone())
+                .or_insert_with(Vec::new)
+                .push(entry);
         }
 
         // Generate invoice file
@@ -469,11 +469,31 @@ impl App {
         content.push_str("=================\n\n");
 
         let mut total = 0.0;
-        for (proj, hrs) in &project_hours {
-            content.push_str(&format!("{}: {:.2} hrs\n", proj, hrs));
-            total += hrs;
+        for (project, proj_entries) in &entries_by_project {
+            content.push_str(&format!("Project: {}\n", project));
+            content.push_str(&format!("{}\n", "-".repeat(40)));
+
+            let mut project_total = 0.0;
+            for entry in proj_entries {
+                if let Some(end) = entry.end {
+                    let hours = (end - entry.start).num_seconds() as f64 / 3600.0;
+                    let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
+                    let end_local = Local.from_utc_datetime(&end.naive_utc());
+
+                    content.push_str(&format!(
+                        "  {} | {} - {} | {:.2} hrs\n",
+                        entry.description,
+                        start_local.format("%Y-%m-%d %H:%M"),
+                        end_local.format("%Y-%m-%d %H:%M"),
+                        hours
+                    ));
+                    project_total += hours;
+                }
+            }
+            content.push_str(&format!("  Subtotal: {:.2} hrs\n\n", project_total));
+            total += project_total;
         }
-        content.push_str("\n----------------\n");
+        content.push_str(&format!("{}\n", "=".repeat(40)));
         content.push_str(&format!("Total: {:.2} hrs\n", total));
 
         if std::fs::write(&file_path, content).is_ok() {

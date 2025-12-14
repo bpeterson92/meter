@@ -11,17 +11,23 @@ A simple time tracking CLI and TUI application for consultants to track billable
 ### Build from source
 
 ```bash
-git clone https://github.com/yourusername/meter.git
+git clone https://github.com/bpeterson92/meter.git
 cd meter
 cargo build --release
 ```
 
 The binary will be at `./target/release/meter`. Optionally, copy it to your PATH:
 
+Linux
 ```bash
-cp ./target/release/meter ~/.local/bin/
+ln -s ./target/release/meter ~/.local/bin/
 # or
-sudo cp ./target/release/meter /usr/local/bin/
+sudo ln -s ./target/release/meter /usr/local/bin/
+```
+
+MacOS
+```bash
+sudo ln -s $PWD/target/release/meter /usr/local/bin/
 ```
 
 ## Quick Start
