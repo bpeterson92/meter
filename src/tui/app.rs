@@ -2,7 +2,7 @@ use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
 use std::collections::HashMap;
 
 use crate::db::Db;
-use crate::models::Entry;
+use crate::models::{Entry, Project};
 
 /// The active screen/view in the TUI
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -11,6 +11,7 @@ pub enum Screen {
     Timer,
     Entries,
     Invoice,
+    Projects,
 }
 
 /// Running state of the application
@@ -43,6 +44,9 @@ pub enum InputMode {
     EditEntryDescription,
     EditEntryStart,
     EditEntryEnd,
+    // Project rate editing modes
+    EditingRate,
+    EditingCurrency,
 }
 
 /// Which field is selected in the edit entry dialog
@@ -94,6 +98,16 @@ pub struct App {
     // UI state
     pub show_help: bool,
     pub status_message: Option<String>,
+
+    // Projects state
+    pub projects: Vec<Project>,
+    pub selected_project_index: usize,
+    pub editing_project_rate: Option<i64>,
+    pub rate_input: String,
+    pub currency_input: String,
+
+    // Project rates cache for invoice
+    pub project_rates: HashMap<String, (f64, String)>,
 }
 
 /// All possible application messages/events
@@ -151,6 +165,19 @@ pub enum Message {
     // Data refresh
     RefreshEntries,
     RefreshActiveTimer,
+
+    // Project rate actions
+    RefreshProjects,
+    SelectNextProject,
+    SelectPreviousProject,
+    EditProjectRate(i64),
+    UpdateRateInput(char),
+    UpdateCurrencyInput(char),
+    DeleteRateChar,
+    DeleteCurrencyChar,
+    SaveProjectRate,
+    CancelEditRate,
+    ClearProjectRate(i64),
 }
 
 impl App {
@@ -172,6 +199,9 @@ impl App {
                 self.confirm_delete = None;
                 if screen == Screen::Invoice {
                     self.refresh_invoice_entries(db);
+                }
+                if screen == Screen::Projects {
+                    self.projects = db.list_projects().unwrap_or_default();
                 }
                 None
             }
@@ -520,6 +550,91 @@ impl App {
                 self.refresh_active_timer(db);
                 None
             }
+
+            // Project rate actions
+            Message::RefreshProjects => {
+                self.projects = db.list_projects().unwrap_or_default();
+                None
+            }
+            Message::SelectNextProject => {
+                if !self.projects.is_empty() {
+                    self.selected_project_index =
+                        (self.selected_project_index + 1).min(self.projects.len() - 1);
+                }
+                None
+            }
+            Message::SelectPreviousProject => {
+                self.selected_project_index = self.selected_project_index.saturating_sub(1);
+                None
+            }
+            Message::EditProjectRate(id) => {
+                if let Some(project) = self.projects.iter().find(|p| p.id == id) {
+                    self.editing_project_rate = Some(id);
+                    self.rate_input = project
+                        .rate
+                        .map(|r| format!("{:.2}", r))
+                        .unwrap_or_default();
+                    self.currency_input =
+                        project.currency.clone().unwrap_or_else(|| "$".to_string());
+                    self.input_mode = InputMode::EditingRate;
+                }
+                None
+            }
+            Message::UpdateRateInput(c) => {
+                if c.is_ascii_digit() || (c == '.' && !self.rate_input.contains('.')) {
+                    self.rate_input.push(c);
+                }
+                None
+            }
+            Message::UpdateCurrencyInput(c) => {
+                self.currency_input.push(c);
+                None
+            }
+            Message::DeleteRateChar => {
+                self.rate_input.pop();
+                None
+            }
+            Message::DeleteCurrencyChar => {
+                self.currency_input.pop();
+                None
+            }
+            Message::SaveProjectRate => {
+                if let Some(project_id) = self.editing_project_rate.take() {
+                    if let Some(project) = self.projects.iter().find(|p| p.id == project_id) {
+                        let rate = self.rate_input.parse::<f64>().ok();
+                        let currency = if self.currency_input.is_empty() {
+                            None
+                        } else {
+                            Some(self.currency_input.as_str())
+                        };
+
+                        if db.set_project_rate(&project.name, rate, currency).is_ok() {
+                            self.status_message =
+                                Some(format!("Rate updated for '{}'", project.name));
+                        }
+                    }
+                }
+                self.input_mode = InputMode::Normal;
+                self.rate_input.clear();
+                self.currency_input.clear();
+                Some(Message::RefreshProjects)
+            }
+            Message::CancelEditRate => {
+                self.editing_project_rate = None;
+                self.input_mode = InputMode::Normal;
+                self.rate_input.clear();
+                self.currency_input.clear();
+                None
+            }
+            Message::ClearProjectRate(id) => {
+                if let Some(project) = self.projects.iter().find(|p| p.id == id) {
+                    if db.set_project_rate(&project.name, None, None).is_ok() {
+                        self.status_message = Some(format!("Rate cleared for '{}'", project.name));
+                        return Some(Message::RefreshProjects);
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -542,6 +657,17 @@ impl App {
     fn refresh_invoice_entries(&mut self, db: &Db) {
         // Get billed entries for invoice selection
         self.invoice_entries = db.list(Some(true)).unwrap_or_default();
+
+        // Fetch project rates for invoice preview
+        self.project_rates.clear();
+        if let Ok(projects) = db.list_projects() {
+            for proj in projects {
+                if let Some(rate) = proj.rate {
+                    let currency = proj.currency.unwrap_or_else(|| "$".to_string());
+                    self.project_rates.insert(proj.name, (rate, currency));
+                }
+            }
+        }
     }
 
     fn generate_invoice(&mut self, db: &Db) {

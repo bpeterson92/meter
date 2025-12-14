@@ -59,6 +59,26 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
                 _ => None,
             };
         }
+        InputMode::EditingRate => {
+            return match key.code {
+                KeyCode::Enter => Some(Message::SaveProjectRate),
+                KeyCode::Esc => Some(Message::CancelEditRate),
+                KeyCode::Tab => Some(Message::EnterInputMode(InputMode::EditingCurrency)),
+                KeyCode::Backspace => Some(Message::DeleteRateChar),
+                KeyCode::Char(c) => Some(Message::UpdateRateInput(c)),
+                _ => None,
+            };
+        }
+        InputMode::EditingCurrency => {
+            return match key.code {
+                KeyCode::Enter => Some(Message::SaveProjectRate),
+                KeyCode::Esc => Some(Message::CancelEditRate),
+                KeyCode::Tab => Some(Message::EnterInputMode(InputMode::EditingRate)),
+                KeyCode::Backspace => Some(Message::DeleteCurrencyChar),
+                KeyCode::Char(c) => Some(Message::UpdateCurrencyInput(c)),
+                _ => None,
+            };
+        }
         InputMode::Normal => {}
     }
 
@@ -68,6 +88,7 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('1') => return Some(Message::SwitchScreen(Screen::Timer)),
         KeyCode::Char('2') => return Some(Message::SwitchScreen(Screen::Entries)),
         KeyCode::Char('3') => return Some(Message::SwitchScreen(Screen::Invoice)),
+        KeyCode::Char('4') => return Some(Message::SwitchScreen(Screen::Projects)),
         _ => {}
     }
 
@@ -76,6 +97,7 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         Screen::Timer => handle_timer_keys(key, app),
         Screen::Entries => handle_entries_keys(key, app),
         Screen::Invoice => handle_invoice_keys(key, app),
+        Screen::Projects => handle_projects_keys(key, app),
     }
 }
 
@@ -184,5 +206,27 @@ fn handle_invoice_keys(key: KeyEvent, app: &App) -> Option<Message> {
             }
             _ => None,
         }
+    }
+}
+
+fn handle_projects_keys(key: KeyEvent, app: &App) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Message::SelectNextProject),
+        KeyCode::Char('k') | KeyCode::Up => Some(Message::SelectPreviousProject),
+        KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+            if let Some(project) = app.projects.get(app.selected_project_index) {
+                Some(Message::EditProjectRate(project.id))
+            } else {
+                None
+            }
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            if let Some(project) = app.projects.get(app.selected_project_index) {
+                Some(Message::ClearProjectRate(project.id))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }

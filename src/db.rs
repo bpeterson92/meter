@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Result, params};
 
-use crate::models::Entry;
+use crate::models::{Entry, Project};
 
 /// Wrapper around a SQLite connection.
 /// The inner `Connection` is intentionally private; use the `conn()` method to obtain
@@ -238,5 +238,96 @@ impl Db {
             ],
         )?;
         Ok(rows_affected > 0)
+    }
+
+    // === Project Methods ===
+
+    /// Get or create a project by name.
+    pub fn get_or_create_project(&self, name: &str) -> Result<Project> {
+        if let Some(project) = self.get_project_by_name(name)? {
+            return Ok(project);
+        }
+
+        self.conn.execute(
+            "INSERT INTO projects (name, rate, currency) VALUES (?1, NULL, '$')",
+            params![name],
+        )?;
+
+        self.get_project_by_name(name)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    /// Get project by name.
+    pub fn get_project_by_name(&self, name: &str) -> Result<Option<Project>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, rate, currency FROM projects WHERE name = ?1")?;
+
+        stmt.query_row(params![name], |row| {
+            let rate_str: Option<String> = row.get(2)?;
+            Ok(Project {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                rate: rate_str.and_then(|s| s.parse().ok()),
+                currency: row.get(3)?,
+            })
+        })
+        .optional()
+    }
+
+    /// List all projects.
+    pub fn list_projects(&self) -> Result<Vec<Project>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, rate, currency FROM projects ORDER BY name")?;
+
+        let projects = stmt.query_map([], |row| {
+            let rate_str: Option<String> = row.get(2)?;
+            Ok(Project {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                rate: rate_str.and_then(|s| s.parse().ok()),
+                currency: row.get(3)?,
+            })
+        })?;
+
+        projects.collect()
+    }
+
+    /// Update project rate.
+    pub fn set_project_rate(
+        &self,
+        name: &str,
+        rate: Option<f64>,
+        currency: Option<&str>,
+    ) -> Result<bool> {
+        self.get_or_create_project(name)?;
+
+        let rate_str = rate.map(|r| format!("{:.2}", r));
+        let rows = self.conn.execute(
+            "UPDATE projects SET rate = ?1, currency = COALESCE(?2, currency) WHERE name = ?3",
+            params![rate_str, currency, name],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Get distinct project names from entries (for migration/sync).
+    pub fn get_distinct_entry_projects(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT project FROM entries ORDER BY project")?;
+
+        let projects = stmt.query_map([], |row| row.get(0))?;
+        projects.collect()
+    }
+
+    /// Sync projects table with existing entry projects.
+    pub fn sync_projects_from_entries(&self) -> Result<()> {
+        let entry_projects = self.get_distinct_entry_projects()?;
+        for name in entry_projects {
+            self.get_or_create_project(&name)?;
+        }
+        Ok(())
     }
 }

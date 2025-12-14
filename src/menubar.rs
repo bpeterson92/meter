@@ -4,6 +4,10 @@ use std::env;
 use std::time::Duration;
 
 use chrono::Utc;
+use global_hotkey::{
+    GlobalHotKeyEvent, GlobalHotKeyManager,
+    hotkey::{Code, HotKey, Modifiers},
+};
 use tao::{
     event::Event,
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -23,6 +27,7 @@ enum UserEvent {
     TrayIconEvent(tray_icon::TrayIconEvent),
     MenuEvent(tray_icon::menu::MenuEvent),
     Tick,
+    HotKey(GlobalHotKeyEvent),
 }
 
 /// Create a simple timer icon (circle with play/pause indicator)
@@ -75,8 +80,23 @@ fn main() {
     let db_path = format!("{}/.meter/db.sqlite", home);
     let db = Db::new(&db_path).expect("Failed to open DB");
     models::init_db(db.conn()).expect("Failed to init DB");
+    models::init_projects_db(db.conn()).expect("Failed to init projects DB");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+
+    // Set up global hotkey (Cmd+Shift+T)
+    let hotkey_manager = GlobalHotKeyManager::new().expect("Failed to create hotkey manager");
+    let hotkey = HotKey::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyT);
+    let hotkey_id = hotkey.id();
+    hotkey_manager
+        .register(hotkey)
+        .expect("Failed to register hotkey");
+
+    // Set up hotkey event handler
+    let proxy = event_loop.create_proxy();
+    GlobalHotKeyEvent::set_event_handler(Some(move |event| {
+        let _ = proxy.send_event(UserEvent::HotKey(event));
+    }));
 
     // Set up event handlers
     let proxy = event_loop.create_proxy();
@@ -125,6 +145,7 @@ fn main() {
     let mut tray_icon = None;
     let mut current_entry: Option<Entry> = None;
     let mut recent_projects: Vec<String> = Vec::new();
+    let _hotkey_manager = hotkey_manager; // Keep alive for the duration of the event loop
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -236,6 +257,58 @@ fn main() {
 
             Event::UserEvent(UserEvent::TrayIconEvent(_event)) => {
                 // Handle tray icon clicks if needed
+            }
+
+            Event::UserEvent(UserEvent::HotKey(event)) => {
+                if event.id == hotkey_id {
+                    // Toggle timer: if running, stop; if stopped, start with most recent project
+                    if current_entry.is_some() {
+                        // Stop the timer
+                        if let Ok(Some(_)) = db.stop_active_timer() {
+                            current_entry = None;
+                            update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
+                            if let Some(ref tray) = tray_icon {
+                                let _ = tray.set_icon(Some(create_icon(false)));
+                                let _ = tray.set_tooltip(Some("Meter - Timer stopped via hotkey"));
+                            }
+                        }
+                    } else {
+                        // Start timer with most recent project
+                        let project = recent_projects
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "Work".to_string());
+                        let entry = Entry {
+                            id: 0,
+                            project: project.clone(),
+                            description: "Work session".to_string(),
+                            start: Utc::now(),
+                            end: None,
+                            billed: false,
+                        };
+                        if db.insert(&entry).is_ok() {
+                            current_entry = db.get_active_entry().unwrap_or(None);
+                            update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
+                            if let Some(ref tray) = tray_icon {
+                                let _ = tray.set_icon(Some(create_icon(true)));
+                                let _ =
+                                    tray.set_tooltip(Some(format!("Meter - Started: {}", project)));
+                            }
+
+                            // Refresh recent projects list
+                            if let Ok(entries) = db.list(None) {
+                                let mut seen = std::collections::HashSet::new();
+                                recent_projects = entries
+                                    .iter()
+                                    .filter(|e| seen.insert(e.project.clone()))
+                                    .take(5)
+                                    .map(|e| e.project.clone())
+                                    .collect();
+                                update_projects_submenu(&projects_submenu, &recent_projects);
+                            }
+                        }
+                    }
+                }
             }
 
             _ => {}

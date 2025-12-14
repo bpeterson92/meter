@@ -15,6 +15,7 @@ tray-icon = "0.19"
 tao = "0.31"
 image = "0.25"
 objc2-core-foundation = "0.3"
+global-hotkey = "0.6"
 
 [[bin]]
 name = "meter"

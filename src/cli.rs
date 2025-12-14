@@ -59,4 +59,22 @@ pub enum Commands {
 
     /// Launch the interactive TUI
     Tui,
+
+    /// Set or view project hourly rate
+    Rate {
+        /// Project name
+        #[arg(short, long)]
+        project: String,
+
+        /// Hourly rate (e.g., 150.00). Omit to view current rate.
+        #[arg(short, long)]
+        rate: Option<f64>,
+
+        /// Currency symbol (default: $)
+        #[arg(short, long, default_value = "$")]
+        currency: String,
+    },
+
+    /// List all projects with their rates
+    Projects,
 }

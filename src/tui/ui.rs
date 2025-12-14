@@ -6,8 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::app::{App, EditField, Screen};
-use super::views::{draw_entries, draw_invoice, draw_timer};
+use super::app::{App, EditField, InputMode, Screen};
+use super::views::{draw_entries, draw_invoice, draw_projects, draw_timer};
 
 /// Main draw function that delegates to screen-specific views
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -26,6 +26,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Timer => draw_timer(frame, app, chunks[1]),
         Screen::Entries => draw_entries(frame, app, chunks[1]),
         Screen::Invoice => draw_invoice(frame, app, chunks[1]),
+        Screen::Projects => draw_projects(frame, app, chunks[1]),
     }
 
     draw_footer(frame, app, chunks[2]);
@@ -43,6 +44,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Draw edit entry dialog if active
     if app.editing_entry.is_some() {
         draw_edit_entry(frame, app);
+    }
+
+    // Draw edit rate dialog if active
+    if app.editing_project_rate.is_some() {
+        draw_edit_rate(frame, app);
     }
 }
 
@@ -78,6 +84,16 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Span::styled(" [3] Invoice ", Style::default().fg(Color::DarkGray))
         },
+        if app.current_screen == Screen::Projects {
+            Span::styled(
+                " [4] Projects ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" [4] Projects ", Style::default().fg(Color::DarkGray))
+        },
     ];
 
     let header = Paragraph::new(Line::from(tabs))
@@ -104,6 +120,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             "[j/k] Navigate  [e] Edit  [d] Delete  [b] Bill  [u] Unbill  [f] Filter  [?] Help  [q] Quit"
         }
         Screen::Invoice => "[j/k] Select  [Enter] Generate  [?] Help  [q] Quit",
+        Screen::Projects => "[j/k] Navigate  [e] Edit rate  [c] Clear rate  [?] Help  [q] Quit",
     };
 
     let status = if let Some(msg) = &app.status_message {
@@ -292,6 +309,76 @@ fn draw_edit_entry(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(edit_dialog, area);
+}
+
+fn draw_edit_rate(frame: &mut Frame, app: &App) {
+    let area = centered_rect(50, 35, frame.area());
+
+    let project_name = app
+        .projects
+        .iter()
+        .find(|p| Some(p.id) == app.editing_project_rate)
+        .map(|p| p.name.as_str())
+        .unwrap_or("Unknown");
+
+    let rate_style = if app.input_mode == InputMode::EditingRate {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let currency_style = if app.input_mode == InputMode::EditingCurrency {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let rate_cursor = if app.input_mode == InputMode::EditingRate {
+        "_"
+    } else {
+        ""
+    };
+    let currency_cursor = if app.input_mode == InputMode::EditingCurrency {
+        "_"
+    } else {
+        ""
+    };
+
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Currency: ", currency_style),
+            Span::styled(
+                format!("[{}{}]", app.currency_input, currency_cursor),
+                currency_style,
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Rate/hr:  ", rate_style),
+            Span::styled(format!("[{}{}]", app.rate_input, rate_cursor), rate_style),
+        ]),
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Tab] Switch field  [Enter] Save  [Esc] Cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let dialog = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Edit Rate: {} ", project_name))
+            .style(Style::default().fg(Color::Cyan)),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(dialog, area);
 }
 
 /// Helper to create a centered rectangle

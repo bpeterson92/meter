@@ -30,8 +30,13 @@ fn main() {
         )
         .unwrap();
 
-    // Create table if not present
+    // Create tables if not present
     models::init_db(db.conn()).expect("Failed to init DB");
+    models::init_projects_db(db.conn()).expect("Failed to init projects DB");
+
+    // Sync existing entry projects to projects table
+    db.sync_projects_from_entries()
+        .expect("Failed to sync projects");
 
     match &cli.command {
         Commands::Start { project, desc } => {
@@ -185,9 +190,27 @@ fn main() {
             writeln!(file, "=================").unwrap();
             writeln!(file).unwrap();
 
-            let mut total = 0.0;
+            let mut total_hours = 0.0;
+            let mut total_cost = 0.0;
+            let mut has_any_rates = false;
+
             for (project, proj_entries) in &entries_by_project {
+                // Get project rate
+                let project_data = db.get_project_by_name(project).ok().flatten();
+                let rate = project_data.as_ref().and_then(|p| p.rate);
+                let currency = project_data
+                    .as_ref()
+                    .and_then(|p| p.currency.clone())
+                    .unwrap_or_else(|| "$".to_string());
+
+                if rate.is_some() {
+                    has_any_rates = true;
+                }
+
                 writeln!(file, "Project: {}", project).unwrap();
+                if let Some(r) = rate {
+                    writeln!(file, "Rate: {}{:.2}/hr", currency, r).unwrap();
+                }
                 writeln!(file, "{}", "-".repeat(40)).unwrap();
 
                 let mut project_total = 0.0;
@@ -209,17 +232,74 @@ fn main() {
                         project_total += hours;
                     }
                 }
-                writeln!(file, "  Subtotal: {:.2} hrs", project_total).unwrap();
+
+                // Project subtotal with cost if rate exists
+                if let Some(r) = rate {
+                    let project_cost = project_total * r;
+                    writeln!(
+                        file,
+                        "  Subtotal: {:.2} hrs x {}{:.2} = {}{:.2}",
+                        project_total, currency, r, currency, project_cost
+                    )
+                    .unwrap();
+                    total_cost += project_cost;
+                } else {
+                    writeln!(file, "  Subtotal: {:.2} hrs", project_total).unwrap();
+                }
                 writeln!(file).unwrap();
-                total += project_total;
+                total_hours += project_total;
             }
             writeln!(file, "{}", "=".repeat(40)).unwrap();
-            writeln!(file, "Total: {:.2} hrs", total).unwrap();
+            writeln!(file, "Total Hours: {:.2}", total_hours).unwrap();
+            if has_any_rates {
+                writeln!(file, "Total Cost: ${:.2}", total_cost).unwrap();
+            }
 
             println!("Invoice written to {}", file_path);
         }
         Commands::Tui => {
             tui::run_tui(db).expect("Failed to run TUI");
+        }
+        Commands::Rate {
+            project,
+            rate,
+            currency,
+        } => {
+            if let Some(rate_value) = rate {
+                db.set_project_rate(project, Some(*rate_value), Some(currency))
+                    .expect("Failed to set rate");
+                println!(
+                    "Set rate for '{}' to {}{:.2}/hr",
+                    project, currency, rate_value
+                );
+            } else {
+                match db.get_project_by_name(project) {
+                    Ok(Some(proj)) => {
+                        if let Some(formatted) = proj.formatted_rate() {
+                            println!("Rate for '{}': {}", project, formatted);
+                        } else {
+                            println!("No rate set for '{}'", project);
+                        }
+                    }
+                    Ok(None) => println!("Project '{}' not found", project),
+                    Err(e) => eprintln!("Error: {}", e),
+                }
+            }
+        }
+        Commands::Projects => {
+            let projects = db.list_projects().expect("Failed to list projects");
+            if projects.is_empty() {
+                println!("No projects found");
+            } else {
+                println!("{:<30} {:<15}", "Project", "Rate");
+                println!("{}", "-".repeat(45));
+                for proj in projects {
+                    let rate_str = proj
+                        .formatted_rate()
+                        .unwrap_or_else(|| "Not set".to_string());
+                    println!("{:<30} {:<15}", proj.name, rate_str);
+                }
+            }
         }
     }
 }
