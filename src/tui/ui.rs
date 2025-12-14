@@ -95,7 +95,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 "[s] Start timer  [?] Help  [q] Quit"
             }
         }
-        Screen::Entries => "[j/k] Navigate  [d] Delete  [b] Bill  [f] Filter  [?] Help  [q] Quit",
+        Screen::Entries => "[j/k] Navigate  [d] Delete  [b] Bill  [u] Unbill  [f] Filter  [?] Help  [q] Quit",
         Screen::Invoice => "[j/k] Select  [Enter] Generate  [?] Help  [q] Quit",
     };
 

@@ -96,6 +96,7 @@ pub enum Message {
     ConfirmDelete,
     CancelDelete,
     MarkEntryBilled(i64),
+    UnbillEntry(i64),
 
     // Invoice actions
     NextInvoiceMode,
@@ -239,6 +240,13 @@ impl App {
             Message::MarkEntryBilled(id) => {
                 if db.mark_billed(id).is_ok() {
                     self.status_message = Some(format!("Entry {} marked as billed", id));
+                    return Some(Message::RefreshEntries);
+                }
+                None
+            }
+            Message::UnbillEntry(id) => {
+                if db.unmark_billed(id).is_ok() {
+                    self.status_message = Some(format!("Entry {} unbilled", id));
                     return Some(Message::RefreshEntries);
                 }
                 None

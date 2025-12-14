@@ -215,4 +215,13 @@ impl Db {
             .execute("UPDATE entries SET billed = 1 WHERE id = ?1", params![id])?;
         Ok(rows_affected > 0)
     }
+    
+    /// Mark an entry as unbilled.
+    pub fn unmark_billed(&self, id: i64) -> Result<bool> {
+        let rows_affected = self
+            .conn
+            .execute("UPDATE entries SET billed = 0 WHERE id = ?1", params![id])?;
+        Ok(rows_affected > 0)
+    }
+
 }

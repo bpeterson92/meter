@@ -114,6 +114,17 @@ fn handle_entries_keys(key: KeyEvent, app: &App) -> Option<Message> {
                 None
             }
         }
+        KeyCode::Char('u') => {
+            if let Some(entry) = app.get_selected_entry() {
+                if entry.billed {
+                    Some(Message::UnbillEntry(entry.id))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
         KeyCode::Char('f') | KeyCode::Char('F') => Some(Message::ToggleBilledFilter),
         KeyCode::Char('g') => Some(Message::SelectPreviousEntry), // go to top (simplified)
         KeyCode::Char('G') => Some(Message::SelectNextEntry),     // go to bottom (simplified)

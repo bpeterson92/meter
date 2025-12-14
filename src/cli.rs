@@ -43,6 +43,12 @@ pub enum Commands {
         id: Option<i64>,
     },
 
+    /// Mark entries as unbilled
+    Unbill {
+        #[arg(short, long)]
+        id: Option<i64>,
+    },
+
     /// Generate a simple invoice text
     Invoice {
         #[arg(short, long)]

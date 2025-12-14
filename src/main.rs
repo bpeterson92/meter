@@ -18,7 +18,7 @@ fn main() {
 
     // DB lives in the home directory
     let home = env::var("HOME").expect("HOME not set");
-    let db_path = format!("{}/.meter.sqlite", home);
+    let db_path = format!("{}/.meter/db.sqlite", home);
     let db = Db::new(&db_path).expect("Failed to open DB");
 
     // Ensure tables exist
@@ -141,6 +141,26 @@ fn main() {
                 println!("Marked all pending entries as billed");
             }
         }
+        Commands::Unbill { id } => {
+            if let Some(entry_id) = id {
+                db.conn()
+                    .execute(
+                        "UPDATE entries SET billed = 0 WHERE id = ?1",
+                        rusqlite::params![entry_id],
+                    )
+                    .expect("Failed to unbill entry");
+                println!("Marked entry {} as unbilled", entry_id);
+            } else {
+                // Mark all billed as unbilled
+                db.conn()
+                    .execute(
+                        "UPDATE entries SET billed = 0 WHERE billed = 1",
+                        rusqlite::params![],
+                    )
+                    .expect("Failed to unbill all entries");
+                println!("Marked all billed entries as unbilled");
+            }
+        }
         Commands::Invoice { month, year } => {
             let entries = db.list(Some(true)).expect("Failed to list billed entries");
             let month = month.unwrap_or(Utc::now().month() as u32);
@@ -155,7 +175,7 @@ fn main() {
                 }
             }
 
-            let mut file_path = format!("{}/invoice_{}_{}.txt", home, year, month);
+            let file_path = format!("{}/invoice_{}_{}.txt", home, year, month);
             let mut file = File::create(&file_path).expect("Failed to create invoice file");
             writeln!(file, "Invoice for {}-{:02}", year, month).unwrap();
             writeln!(file, "=================").unwrap();
