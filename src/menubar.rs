@@ -42,7 +42,7 @@ enum UserEvent {
 
 /// Create a timer icon with progress ring
 /// - When idle: gray ring outline
-/// - When running: green ring that fills based on elapsed time (cycles every hour)
+/// - When running: white ring that fills based on elapsed time (cycles every hour)
 fn create_icon(is_running: bool, elapsed_seconds: Option<i64>) -> Icon {
     let size = 22u32; // Standard macOS menu bar icon size
     let mut rgba = vec![0u8; (size * size * 4) as usize];
@@ -80,10 +80,10 @@ fn create_icon(is_running: bool, elapsed_seconds: Option<i64>) -> Icon {
 
                 if is_running {
                     if angle <= progress {
-                        // Filled portion - green
-                        rgba[idx] = 76; // R
-                        rgba[idx + 1] = 217; // G
-                        rgba[idx + 2] = 100; // B
+                        // Filled portion - white
+                        rgba[idx] = 255; // R
+                        rgba[idx + 1] = 255; // G
+                        rgba[idx + 2] = 255; // B
                         rgba[idx + 3] = 255; // A
                     } else {
                         // Unfilled portion - dark gray
@@ -104,10 +104,10 @@ fn create_icon(is_running: bool, elapsed_seconds: Option<i64>) -> Icon {
             // Draw center dot
             if dist <= 3.0 {
                 if is_running {
-                    // Green center dot
-                    rgba[idx] = 76; // R
-                    rgba[idx + 1] = 217; // G
-                    rgba[idx + 2] = 100; // B
+                    // White center dot
+                    rgba[idx] = 255; // R
+                    rgba[idx + 1] = 255; // G
+                    rgba[idx + 2] = 255; // B
                     rgba[idx + 3] = 255; // A
                 } else {
                     // Gray center dot
