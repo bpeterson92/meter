@@ -347,7 +347,9 @@ impl App {
                 None
             }
             Message::Tick => {
-                // Just triggers a redraw for timer updates
+                // Refresh active timer from database to detect external changes
+                // (e.g., timer started/stopped from menu bar)
+                self.refresh_active_timer(db);
                 None
             }
 

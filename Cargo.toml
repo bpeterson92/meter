@@ -9,3 +9,18 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 ratatui = "0.29"
 crossterm = "0.28"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = "0.19"
+tao = "0.31"
+image = "0.25"
+objc2-core-foundation = "0.3"
+
+[[bin]]
+name = "meter"
+path = "src/main.rs"
+
+[[bin]]
+name = "meter-menubar"
+path = "src/menubar.rs"
+required-features = []
