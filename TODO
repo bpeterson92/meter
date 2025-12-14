@@ -1,2 +1,8 @@
-[ ] Fix menubar hover tooltip disappears on update
-[ ] Fix menubar "Start Timer" button not working
+[ ] Fix: menubar hover tooltip disappears on update
+[ ] Fix: menubar "Start Timer" button not working
+[ ] Fix: TUI Entries menu to update periodically
+[ ] Fix: TUI Entries Delete subwindow to display [y] and [n] better
+    - Odd/even weirdness
+[ ] Fix: TUI Invoice menu latches on Select Specific Entries
+    - Use Left/Right arrow keys to dive into the submenu
+[ ] Remove: j/k navigation in TUI, arrow keys work fine...
