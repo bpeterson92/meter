@@ -40,14 +40,24 @@ enum UserEvent {
     HotKey(GlobalHotKeyEvent),
 }
 
-/// Create a simple timer icon (circle with play/pause indicator)
-fn create_icon(is_running: bool) -> Icon {
+/// Create a timer icon with progress ring
+/// - When idle: gray ring outline
+/// - When running: green ring that fills based on elapsed time (cycles every hour)
+fn create_icon(is_running: bool, elapsed_seconds: Option<i64>) -> Icon {
     let size = 22u32; // Standard macOS menu bar icon size
     let mut rgba = vec![0u8; (size * size * 4) as usize];
 
-    // Draw a simple circle
     let center = size as f32 / 2.0;
-    let radius = size as f32 / 2.0 - 2.0;
+    let outer_radius = size as f32 / 2.0 - 1.0;
+    let inner_radius = outer_radius - 3.5;
+
+    // Calculate progress (0.0 to 1.0) - cycles every hour
+    let progress = if is_running {
+        let secs = elapsed_seconds.unwrap_or(0);
+        (secs % 3600) as f32 / 3600.0
+    } else {
+        0.0
+    };
 
     for y in 0..size {
         for x in 0..size {
@@ -57,15 +67,50 @@ fn create_icon(is_running: bool) -> Icon {
 
             let idx = ((y * size + x) * 4) as usize;
 
-            if dist <= radius {
+            // Check if pixel is in the ring area
+            if dist <= outer_radius && dist >= inner_radius {
+                // Calculate angle (0 at 12 o'clock, clockwise)
+                // atan2(dx, -dy) gives 0 at top, positive clockwise
+                let raw_angle = dx.atan2(-dy); // -PI to PI, 0 at top
+                let angle = if raw_angle < 0.0 {
+                    (raw_angle + 2.0 * std::f32::consts::PI) / (2.0 * std::f32::consts::PI)
+                } else {
+                    raw_angle / (2.0 * std::f32::consts::PI)
+                };
+
                 if is_running {
-                    // Green when running
+                    if angle <= progress {
+                        // Filled portion - green
+                        rgba[idx] = 76; // R
+                        rgba[idx + 1] = 217; // G
+                        rgba[idx + 2] = 100; // B
+                        rgba[idx + 3] = 255; // A
+                    } else {
+                        // Unfilled portion - dark gray
+                        rgba[idx] = 60; // R
+                        rgba[idx + 1] = 60; // G
+                        rgba[idx + 2] = 60; // B
+                        rgba[idx + 3] = 255; // A
+                    }
+                } else {
+                    // Idle - gray ring
+                    rgba[idx] = 128; // R
+                    rgba[idx + 1] = 128; // G
+                    rgba[idx + 2] = 128; // B
+                    rgba[idx + 3] = 255; // A
+                }
+            }
+
+            // Draw center dot
+            if dist <= 3.0 {
+                if is_running {
+                    // Green center dot
                     rgba[idx] = 76; // R
                     rgba[idx + 1] = 217; // G
                     rgba[idx + 2] = 100; // B
                     rgba[idx + 3] = 255; // A
                 } else {
-                    // Gray when idle
+                    // Gray center dot
                     rgba[idx] = 128; // R
                     rgba[idx + 1] = 128; // G
                     rgba[idx + 2] = 128; // B
@@ -181,6 +226,7 @@ fn main() {
     let mut tray_icon = None;
     let mut current_entry: Option<Entry> = None;
     let mut recent_projects: Vec<String> = Vec::new();
+    let mut last_tooltip: Option<String> = None;
     let _hotkey_manager = hotkey_manager; // Keep alive for the duration of the event loop
 
     event_loop.run(move |event, _, control_flow| {
@@ -211,11 +257,14 @@ fn main() {
                 update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
                 update_projects_submenu(&projects_submenu, &recent_projects);
 
+                let elapsed = current_entry
+                    .as_ref()
+                    .map(|e| (Utc::now() - e.start).num_seconds());
                 tray_icon = Some(
                     TrayIconBuilder::new()
                         .with_menu(Box::new(tray_menu.clone()))
                         .with_tooltip("Meter - Time Tracking")
-                        .with_icon(create_icon(is_running))
+                        .with_icon(create_icon(is_running, elapsed))
                         .build()
                         .unwrap(),
                 );
@@ -239,23 +288,27 @@ fn main() {
                 // Update menu state
                 update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
 
-                // Update icon if state changed
-                if was_running != is_running {
-                    if let Some(ref tray) = tray_icon {
-                        let _ = tray.set_icon(Some(create_icon(is_running)));
-                    }
+                // Update icon (always update when running to show progress)
+                if let Some(ref tray) = tray_icon {
+                    let elapsed = current_entry
+                        .as_ref()
+                        .map(|e| (Utc::now() - e.start).num_seconds());
+                    let _ = tray.set_icon(Some(create_icon(is_running, elapsed)));
                 }
 
-                // Update tooltip with elapsed time
-                if let Some(entry) = &current_entry {
+                // Update tooltip with elapsed time (only when text changes to avoid flickering)
+                let new_tooltip = if let Some(entry) = &current_entry {
                     let elapsed = (Utc::now() - entry.start).num_seconds();
-                    let tooltip =
-                        format!("Meter - {} ({})", entry.project, format_duration(elapsed));
+                    format!("Meter - {} ({})", entry.project, format_duration(elapsed))
+                } else {
+                    "Meter - No active timer".to_string()
+                };
+
+                if last_tooltip.as_ref() != Some(&new_tooltip) {
                     if let Some(tray) = &tray_icon {
-                        let _ = tray.set_tooltip(Some(tooltip));
+                        let _ = tray.set_tooltip(Some(&new_tooltip));
                     }
-                } else if let Some(tray) = &tray_icon {
-                    let _ = tray.set_tooltip(Some("Meter - No active timer"));
+                    last_tooltip = Some(new_tooltip);
                 }
             }
 
@@ -270,7 +323,7 @@ fn main() {
                         current_entry = None;
                         update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
                         if let Some(ref tray) = tray_icon {
-                            let _ = tray.set_icon(Some(create_icon(false)));
+                            let _ = tray.set_icon(Some(create_icon(false, None)));
                             let _ = tray.set_tooltip(Some("Meter - Timer stopped"));
                         }
                     }
@@ -289,7 +342,7 @@ fn main() {
                         current_entry = db.get_active_entry().unwrap_or(None);
                         update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
                         if let Some(ref tray) = tray_icon {
-                            let _ = tray.set_icon(Some(create_icon(true)));
+                            let _ = tray.set_icon(Some(create_icon(true, Some(0))));
                         }
                     }
                 }
@@ -308,7 +361,7 @@ fn main() {
                             current_entry = None;
                             update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
                             if let Some(ref tray) = tray_icon {
-                                let _ = tray.set_icon(Some(create_icon(false)));
+                                let _ = tray.set_icon(Some(create_icon(false, None)));
                                 let _ = tray.set_tooltip(Some("Meter - Timer stopped via hotkey"));
                             }
                         }
@@ -330,7 +383,7 @@ fn main() {
                             current_entry = db.get_active_entry().unwrap_or(None);
                             update_menu_state(&status_i, &start_i, &stop_i, &current_entry);
                             if let Some(ref tray) = tray_icon {
-                                let _ = tray.set_icon(Some(create_icon(true)));
+                                let _ = tray.set_icon(Some(create_icon(true, Some(0))));
                                 let _ =
                                     tray.set_tooltip(Some(format!("Meter - Started: {}", project)));
                             }

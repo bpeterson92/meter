@@ -25,14 +25,25 @@ ln -s ./target/release/meter ~/.local/bin/
 sudo ln -s ./target/release/meter /usr/local/bin/
 ```
 
-MacOS
+macOS
 ```bash
 sudo ln -s $PWD/target/release/meter /usr/local/bin/
 ```
 
-**Tray icon & global hotkey**
+### macOS Menu Bar App
 
-On macOS and Linux, `meter` registers a global hotkey (`⌘⇧T`) that starts a timer from anywhere. A small tray icon shows the current status (running/stopped) and can be clicked to stop the timer.
+Build and install the menu bar companion app:
+
+```bash
+./scripts/bundle-menubar.sh
+cp -r ./target/release/Meter.app /Applications/
+```
+
+The menu bar app:
+- Shows a progress ring icon that fills as time passes (cycles every hour)
+- Global hotkey `Cmd+Shift+T` to toggle timer from anywhere
+- Runs in the background (no Dock icon, no Cmd+Tab)
+- Start on login: System Settings > General > Login Items > add Meter
 
 ## Quick Start
 
@@ -139,7 +150,7 @@ Examples:
 
 All data is stored in a SQLite database located at `~/.meter/db.sqlite`.  
 The database holds two tables: `entries` (time records) and `projects` (project names and rates).  
-Invoices are written as plain‑text files in your home directory: `~/invoice_YYYY_MM.txt`.
+Invoices are written as plain-text files to `~/.meter/invoices/invoice_YYYY_MM.txt`.
 
 ## License
 
