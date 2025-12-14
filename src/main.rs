@@ -1,16 +1,17 @@
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
+use chrono::{Datelike, Duration, Utc};
 use clap::Parser;
+use std::collections::HashMap;
 use std::env;
-use std::fs::File;
-use std::io::Write;
 
 mod cli;
 mod db;
+mod invoice;
 mod models;
 mod tui;
 
 use cli::{Cli, Commands};
 use db::Db;
+use invoice::{ProjectRate, filter_entries_by_month, write_invoice};
 use models::Entry;
 
 fn main() {
@@ -40,56 +41,25 @@ fn main() {
 
     match &cli.command {
         Commands::Start { project, desc } => {
-            let entry = Entry {
-                id: 0,
-                project: project.clone(),
-                description: desc.clone(),
-                start: Utc::now(),
-                end: None,
-                billed: false,
-            };
-            db.insert(&entry).expect("Failed to insert entry");
+            db.start_timer(project, desc)
+                .expect("Failed to start timer");
             println!("Started timer for project '{}'", project);
         }
-        Commands::Stop => {
-            // Find the latest unended entry
-            let mut stmt = db
-                .conn()
-                .prepare(
-                    "SELECT id, project, description, start FROM entries
-                 WHERE end IS NULL ORDER BY start DESC LIMIT 1",
-                )
-                .expect("Failed to prepare query");
-            let row = stmt
-                .query_row([], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                })
-                .expect("No running timer");
-
-            let (id, project, description, start_str) = row;
-            let start = DateTime::parse_from_rfc3339(&start_str)
-                .unwrap()
-                .with_timezone(&Utc);
-            let now = Utc::now();
-            let end_ts = now.to_rfc3339();
-
-            db.conn()
-                .execute(
-                    "UPDATE entries SET end = ?1 WHERE id = ?2",
-                    rusqlite::params![end_ts, id],
-                )
-                .expect("Failed to stop timer");
-            println!(
-                "Stopped timer for project '{}', duration {:.2} hrs",
-                project,
-                (now - start).num_seconds() as f64 / 3600.0
-            );
-        }
+        Commands::Stop => match db.stop_active_timer().expect("Failed to stop timer") {
+            Some(entry) => {
+                let duration = entry
+                    .end
+                    .map(|end| (end - entry.start).num_seconds() as f64 / 3600.0)
+                    .unwrap_or(0.0);
+                println!(
+                    "Stopped timer for project '{}', duration {:.2} hrs",
+                    entry.project, duration
+                );
+            }
+            None => {
+                println!("No running timer");
+            }
+        },
         Commands::Add {
             project,
             desc,
@@ -128,139 +98,58 @@ fn main() {
         }
         Commands::Bill { id } => {
             if let Some(entry_id) = id {
-                db.conn()
-                    .execute(
-                        "UPDATE entries SET billed = 1 WHERE id = ?1",
-                        rusqlite::params![entry_id],
-                    )
-                    .expect("Failed to bill entry");
+                db.mark_billed(*entry_id).expect("Failed to bill entry");
                 println!("Marked entry {} as billed", entry_id);
             } else {
-                // Mark all pending as billed
-                db.conn()
-                    .execute(
-                        "UPDATE entries SET billed = 1 WHERE billed = 0",
-                        rusqlite::params![],
-                    )
-                    .expect("Failed to bill all entries");
-                println!("Marked all pending entries as billed");
+                let count = db.mark_all_billed().expect("Failed to bill all entries");
+                println!("Marked {} entries as billed", count);
             }
         }
         Commands::Unbill { id } => {
             if let Some(entry_id) = id {
-                db.conn()
-                    .execute(
-                        "UPDATE entries SET billed = 0 WHERE id = ?1",
-                        rusqlite::params![entry_id],
-                    )
-                    .expect("Failed to unbill entry");
+                db.unmark_billed(*entry_id).expect("Failed to unbill entry");
                 println!("Marked entry {} as unbilled", entry_id);
             } else {
-                // Mark all billed as unbilled
-                db.conn()
-                    .execute(
-                        "UPDATE entries SET billed = 0 WHERE billed = 1",
-                        rusqlite::params![],
-                    )
+                let count = db
+                    .unmark_all_billed()
                     .expect("Failed to unbill all entries");
-                println!("Marked all billed entries as unbilled");
+                println!("Marked {} entries as unbilled", count);
             }
         }
         Commands::Invoice { month, year } => {
-            let entries = db.list(Some(true)).expect("Failed to list billed entries");
+            let all_entries = db.list(Some(true)).expect("Failed to list billed entries");
             let month = month.unwrap_or(Utc::now().month() as u32);
             let year = year.unwrap_or(Utc::now().year());
 
-            // Group entries by project
-            let mut entries_by_project: std::collections::HashMap<String, Vec<Entry>> =
-                std::collections::HashMap::new();
-            for e in entries {
-                let end = e.end.unwrap_or(Utc::now());
-                if end.year() == year as i32 && end.month() == month {
-                    entries_by_project
-                        .entry(e.project.clone())
-                        .or_insert_with(Vec::new)
-                        .push(e);
-                }
-            }
+            // Filter entries by month
+            let entries = filter_entries_by_month(&all_entries, year, month);
 
-            let invoice_dir = format!("{}/meter/invoices", home);
-            std::fs::create_dir_all(&invoice_dir).ok();
-    
-            let file_path = format!("{}/invoice_{}_{:02}.txt", invoice_dir, year, month);
-            
-            let mut file = File::create(&file_path).expect("Failed to create invoice file");
-            writeln!(file, "Invoice for {}-{:02}", year, month).unwrap();
-            writeln!(file, "=========================").unwrap();
-            writeln!(file).unwrap();
-
-            let mut total_hours = 0.0;
-            let mut total_cost = 0.0;
-            let mut has_any_rates = false;
-
-            for (project, proj_entries) in &entries_by_project {
-                // Get project rate
-                let project_data = db.get_project_by_name(project).ok().flatten();
-                let rate = project_data.as_ref().and_then(|p| p.rate);
-                let currency = project_data
-                    .as_ref()
-                    .and_then(|p| p.currency.clone())
-                    .unwrap_or_else(|| "$".to_string());
-
-                if rate.is_some() {
-                    has_any_rates = true;
-                }
-
-                writeln!(file, "Project: {}", project).unwrap();
-                if let Some(r) = rate {
-                    writeln!(file, "Rate: {}{:.2}/hr", currency, r).unwrap();
-                }
-                writeln!(file, "{}", "-".repeat(40)).unwrap();
-
-                let mut project_total = 0.0;
-                for entry in proj_entries {
-                    if let Some(end) = entry.end {
-                        let hours = (end - entry.start).num_seconds() as f64 / 3600.0;
-                        let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
-                        let end_local = Local.from_utc_datetime(&end.naive_utc());
-
-                        writeln!(
-                            file,
-                            "  {:<20} | {} - {} | {:>6.2} hrs",
-                            entry.description,
-                            start_local.format("%Y-%m-%d %H:%M"),
-                            end_local.format("%Y-%m-%d %H:%M"),
-                            hours
-                        )
-                        .unwrap();
-                        project_total += hours;
+            // Build project rates map
+            let mut project_rates: HashMap<String, ProjectRate> = HashMap::new();
+            for entry in &entries {
+                if !project_rates.contains_key(&entry.project) {
+                    if let Ok(Some(proj)) = db.get_project_by_name(&entry.project) {
+                        if let Some(rate) = proj.rate {
+                            project_rates.insert(
+                                entry.project.clone(),
+                                ProjectRate {
+                                    rate,
+                                    currency: proj.currency.unwrap_or_else(|| "$".to_string()),
+                                },
+                            );
+                        }
                     }
                 }
+            }
 
-                // Project subtotal with cost if rate exists
-                if let Some(r) = rate {
-                    let project_cost = project_total * r;
-                    writeln!(
-                        file,
-                        "  Subtotal: {:>6.2} hrs x {}{:.2} = {}{:.2}",
-                        project_total, currency, r, currency, project_cost
-                    )
-                    .unwrap();
-                    total_cost += project_cost;
-                } else {
-                    writeln!(file, "  Subtotal: {:>6.2} hrs", project_total).unwrap();
+            match write_invoice(&entries, &project_rates, year, month) {
+                Ok(result) => {
+                    println!("Invoice written to {}", result.file_path);
                 }
-                writeln!(file).unwrap();
-                total_hours += project_total;
+                Err(e) => {
+                    eprintln!("Failed to write invoice: {}", e);
+                }
             }
-            writeln!(file, "{}", "=".repeat(50)).unwrap();
-            if has_any_rates {
-                writeln!(file, "Total: {:>6.2} hrs | ${:.2}", total_hours, total_cost).unwrap();
-            } else {
-                writeln!(file, "Total: {:>6.2} hrs", total_hours).unwrap();
-            }
-
-            println!("Invoice written to {}", file_path);
         }
         Commands::Tui => {
             tui::run_tui(db).expect("Failed to run TUI");

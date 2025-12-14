@@ -114,6 +114,24 @@ impl Db {
         Ok(entry)
     }
 
+    /// Start a new timer for a project.
+    /// Returns the created entry.
+    pub fn start_timer(&self, project: &str, description: &str) -> Result<Entry> {
+        let entry = Entry {
+            id: 0,
+            project: project.to_string(),
+            description: description.to_string(),
+            start: Utc::now(),
+            end: None,
+            billed: false,
+        };
+        self.insert(&entry)?;
+
+        // Get the inserted entry with its ID
+        self.get_active_entry()?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
     /// Stop the active timer by setting its end time to now.
     pub fn stop_active_timer(&self) -> Result<Option<Entry>> {
         if let Some(entry) = self.get_active_entry()? {
@@ -216,12 +234,28 @@ impl Db {
         Ok(rows_affected > 0)
     }
 
+    /// Mark all pending entries as billed.
+    pub fn mark_all_billed(&self) -> Result<usize> {
+        let rows_affected = self
+            .conn
+            .execute("UPDATE entries SET billed = 1 WHERE billed = 0", params![])?;
+        Ok(rows_affected)
+    }
+
     /// Mark an entry as unbilled.
     pub fn unmark_billed(&self, id: i64) -> Result<bool> {
         let rows_affected = self
             .conn
             .execute("UPDATE entries SET billed = 0 WHERE id = ?1", params![id])?;
         Ok(rows_affected > 0)
+    }
+
+    /// Mark all billed entries as unbilled.
+    pub fn unmark_all_billed(&self) -> Result<usize> {
+        let rows_affected = self
+            .conn
+            .execute("UPDATE entries SET billed = 0 WHERE billed = 1", params![])?;
+        Ok(rows_affected)
     }
 
     /// Update an entry's fields.

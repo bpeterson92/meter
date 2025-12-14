@@ -2,6 +2,7 @@ use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
 use std::collections::HashMap;
 
 use crate::db::Db;
+use crate::invoice::{ProjectRate, write_invoice};
 use crate::models::{Entry, Project};
 
 /// The active screen/view in the TUI
@@ -107,7 +108,7 @@ pub struct App {
     pub currency_input: String,
 
     // Project rates cache for invoice
-    pub project_rates: HashMap<String, (f64, String)>,
+    pub project_rates: HashMap<String, ProjectRate>,
 }
 
 /// All possible application messages/events
@@ -213,15 +214,10 @@ impl App {
             // Timer actions
             Message::StartTimer => {
                 if !self.project_input.is_empty() && self.active_entry.is_none() {
-                    let entry = Entry {
-                        id: 0,
-                        project: self.project_input.clone(),
-                        description: self.description_input.clone(),
-                        start: Utc::now(),
-                        end: None,
-                        billed: false,
-                    };
-                    if db.insert(&entry).is_ok() {
+                    if db
+                        .start_timer(&self.project_input, &self.description_input)
+                        .is_ok()
+                    {
                         self.project_input.clear();
                         self.description_input = "Work session".to_string();
                         self.status_message = Some("Timer started".to_string());
@@ -664,7 +660,8 @@ impl App {
             for proj in projects {
                 if let Some(rate) = proj.rate {
                     let currency = proj.currency.unwrap_or_else(|| "$".to_string());
-                    self.project_rates.insert(proj.name, (rate, currency));
+                    self.project_rates
+                        .insert(proj.name, ProjectRate { rate, currency });
                 }
             }
         }
@@ -721,17 +718,7 @@ impl App {
                 .collect(),
         };
 
-        // Group entries by project
-        let mut entries_by_project: HashMap<String, Vec<&Entry>> = HashMap::new();
-        for entry in &entries {
-            entries_by_project
-                .entry(entry.project.clone())
-                .or_insert_with(Vec::new)
-                .push(entry);
-        }
-
-        // Generate invoice file
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        // Determine year/month for invoice filename
         let (year, month) = match &self.invoice_mode {
             InvoiceMode::CurrentMonth => (now.year(), now.month()),
             InvoiceMode::PriorMonth => {
@@ -749,77 +736,14 @@ impl App {
             InvoiceMode::SelectEntries => (now.year(), now.month()),
         };
 
-        // Ensure the directory exists
-        let invoice_dir = format!("{}/meter/invoices", home);
-        std::fs::create_dir_all(&invoice_dir).ok();
-
-        let file_path = format!("{}/invoice_{}_{:02}.txt", invoice_dir, year, month);
-
-        let mut content = format!("Invoice for {}-{:02}\n", year, month);
-        content.push_str("=========================\n\n");
-
-        let mut total_hours = 0.0;
-        let mut total_cost = 0.0;
-        let mut has_any_rates = false;
-
-        for (project, proj_entries) in &entries_by_project {
-            // Get project rate from cache
-            let rate_info = self.project_rates.get(project);
-            if rate_info.is_some() {
-                has_any_rates = true;
+        // Use shared invoice generation
+        match write_invoice(&entries, &self.project_rates, year, month) {
+            Ok(result) => {
+                self.status_message = Some(format!("Invoice written to {}", result.file_path));
             }
-
-            content.push_str(&format!("Project: {}\n", project));
-            if let Some((rate, currency)) = rate_info {
-                content.push_str(&format!("Rate: {}{:.2}/hr\n", currency, rate));
+            Err(_) => {
+                self.status_message = Some("Failed to write invoice".to_string());
             }
-            content.push_str(&format!("{}\n", "-".repeat(40)));
-
-            let mut project_total = 0.0;
-            for entry in proj_entries {
-                if let Some(end) = entry.end {
-                    let hours = (end - entry.start).num_seconds() as f64 / 3600.0;
-                    let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
-                    let end_local = Local.from_utc_datetime(&end.naive_utc());
-
-                    content.push_str(&format!(
-                        "  {:<24} | {} - {} | {:>6.2} hrs\n",
-                        entry.description,
-                        start_local.format("%Y-%m-%d %H:%M"),
-                        end_local.format("%Y-%m-%d %H:%M"),
-                        hours
-                    ));
-                    project_total += hours;
-                }
-            }
-
-            // Project subtotal with cost if rate exists
-            if let Some((rate, currency)) = rate_info {
-                let project_cost = project_total * rate;
-                content.push_str(&format!(
-                    "  Subtotal: {:>6.2} hrs x {}{:.2} = {}{:.2}\n\n",
-                    project_total, currency, rate, currency, project_cost
-                ));
-                total_cost += project_cost;
-            } else {
-                content.push_str(&format!("  Subtotal: {:>6.2} hrs\n\n", project_total));
-            }
-            total_hours += project_total;
-        }
-        content.push_str(&format!("{}\n", "=".repeat(50)));
-        if has_any_rates {
-            content.push_str(&format!(
-                "Total: {:>6.2} hrs | ${:.2}\n",
-                total_hours, total_cost
-            ));
-        } else {
-            content.push_str(&format!("Total: {:>6.2} hrs\n", total_hours));
-        }
-
-        if std::fs::write(&file_path, content).is_ok() {
-            self.status_message = Some(format!("Invoice written to {}", file_path));
-        } else {
-            self.status_message = Some("Failed to write invoice".to_string());
         }
     }
 

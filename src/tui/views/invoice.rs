@@ -172,12 +172,12 @@ fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
         let mut has_rates = false;
 
         for (project, hours) in &project_hours {
-            if let Some((rate, currency)) = app.project_rates.get(project) {
+            if let Some(rate_info) = app.project_rates.get(project) {
                 has_rates = true;
-                let cost = hours * rate;
+                let cost = hours * rate_info.rate;
                 lines.push(Line::from(format!(
                     "  {:<15} | {:>6.2} hrs x {}{:.2} = {}{:.2}",
-                    project, hours, currency, rate, currency, cost
+                    project, hours, rate_info.currency, rate_info.rate, rate_info.currency, cost
                 )));
                 total_cost += cost;
             } else {
