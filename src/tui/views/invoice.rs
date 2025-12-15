@@ -15,13 +15,50 @@ pub fn draw_invoice(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
 
-    draw_mode_selection(frame, app, chunks[0]);
+    // Left side: mode selection and client selection
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(12), Constraint::Length(8)])
+        .split(chunks[0]);
+
+    draw_mode_selection(frame, app, left_chunks[0]);
+    draw_client_selection(frame, app, left_chunks[1]);
 
     if app.invoice_mode == InvoiceMode::SelectEntries {
         draw_entry_selection(frame, app, chunks[1]);
     } else {
         draw_preview(frame, app, chunks[1]);
     }
+}
+
+fn draw_client_selection(frame: &mut Frame, app: &App, area: Rect) {
+    let client_name = match app.get_selected_invoice_client() {
+        Some(client) => client.name.clone(),
+        None => "None (No client)".to_string(),
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Bill To:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  [c] {}", client_name),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Press [c] to cycle clients",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let block =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Client "));
+
+    frame.render_widget(block, area);
 }
 
 fn draw_mode_selection(frame: &mut Frame, app: &App, area: Rect) {

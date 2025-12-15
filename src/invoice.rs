@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, TimeZone};
+use chrono::{Datelike, Days, Local, TimeZone, Utc};
 use genpdf::elements::{Break, Paragraph, TableLayout};
 use genpdf::fonts::{FontData, FontFamily};
 use genpdf::style::Style;
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 
-use crate::models::Entry;
+use crate::models::{Client, Entry, InvoiceSettings};
 
 /// Project rate information for invoice calculations
 #[derive(Debug, Clone)]
@@ -16,13 +16,27 @@ pub struct ProjectRate {
     pub currency: String,
 }
 
+/// Parameters for invoice generation
+pub struct InvoiceParams<'a> {
+    pub entries: &'a [Entry],
+    pub project_rates: &'a HashMap<String, ProjectRate>,
+    pub year: i32,
+    pub month: u32,
+    pub invoice_number: i64,
+    pub settings: &'a InvoiceSettings,
+    pub client: Option<&'a Client>,
+    pub tax_rate: f64,
+}
+
 /// Result of invoice generation
 #[derive(Debug)]
 pub struct InvoiceResult {
     pub file_path: String,
-    pub total_hours: f64,
-    pub total_cost: f64,
-    pub has_rates: bool,
+    pub date_issued: String,
+    pub due_date: String,
+    pub subtotal: f64,
+    pub tax_amount: f64,
+    pub total: f64,
 }
 
 /// Get the invoice directory path (creates if needed)
@@ -35,23 +49,19 @@ pub fn get_invoice_dir() -> io::Result<String> {
 
 /// Load font from system paths
 fn load_font_family() -> io::Result<FontFamily<FontData>> {
-    // macOS system font paths - try Arial first as it's most reliable
     let font_configs = [
-        // macOS Arial (individual files)
         (
             "/System/Library/Fonts/Supplemental/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
             "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
             "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
         ),
-        // macOS Courier New as fallback
         (
             "/System/Library/Fonts/Supplemental/Courier New.ttf",
             "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
             "/System/Library/Fonts/Supplemental/Courier New Italic.ttf",
             "/System/Library/Fonts/Supplemental/Courier New Bold Italic.ttf",
         ),
-        // Linux Liberation Sans
         (
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -65,7 +75,6 @@ fn load_font_family() -> io::Result<FontFamily<FontData>> {
             let regular_font = FontData::new(regular_data, None)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-            // Try to load bold/italic variants, fall back to regular if not found
             let bold_font = fs::read(bold)
                 .ok()
                 .and_then(|data| FontData::new(data, None).ok())
@@ -96,73 +105,154 @@ fn load_font_family() -> io::Result<FontFamily<FontData>> {
     ))
 }
 
+/// Calculate due date based on payment terms
+fn calculate_due_date(payment_terms: &str) -> String {
+    let today = Utc::now();
+    let days = if payment_terms.to_lowercase().contains("net 30") {
+        30
+    } else if payment_terms.to_lowercase().contains("net 15") {
+        15
+    } else if payment_terms.to_lowercase().contains("net 60") {
+        60
+    } else {
+        0 // Due on receipt
+    };
+
+    if days > 0 {
+        let due = today.checked_add_days(Days::new(days)).unwrap_or(today);
+        due.format("%Y-%m-%d").to_string()
+    } else {
+        today.format("%Y-%m-%d").to_string()
+    }
+}
+
 /// Generate and write invoice to PDF file
-/// Returns the result with file path and totals
-pub fn write_invoice(
-    entries: &[Entry],
-    project_rates: &HashMap<String, ProjectRate>,
-    year: i32,
-    month: u32,
-) -> io::Result<InvoiceResult> {
+pub fn write_invoice(params: &InvoiceParams) -> io::Result<InvoiceResult> {
     let invoice_dir = get_invoice_dir()?;
-    let file_path = format!("{}/invoice_{}_{:02}.pdf", invoice_dir, year, month);
+    let file_path = format!("{}/invoice_{:04}.pdf", invoice_dir, params.invoice_number);
+
+    let date_issued = Utc::now().format("%Y-%m-%d").to_string();
+    let due_date = calculate_due_date(&params.settings.default_payment_terms);
 
     // Group entries by project
     let mut entries_by_project: HashMap<String, Vec<&Entry>> = HashMap::new();
-    for entry in entries {
+    for entry in params.entries {
         entries_by_project
             .entry(entry.project.clone())
             .or_default()
             .push(entry);
     }
 
-    // Calculate totals
-    let mut total_hours = 0.0;
-    let mut total_cost = 0.0;
-    let mut has_any_rates = false;
-
     // Load font and create document
     let font_family = load_font_family()?;
     let mut doc = Document::new(font_family);
-    doc.set_title(format!("Invoice {}-{:02}", year, month));
+    doc.set_title(format!("Invoice #{:04}", params.invoice_number));
 
-    // Set up page decorator with margins
     let mut decorator = SimplePageDecorator::new();
     decorator.set_margins(20);
     doc.set_page_decorator(decorator);
 
-    // Title
+    // Styles
     let title_style = Style::new().bold().with_font_size(24);
-    doc.push(Paragraph::new(format!("Invoice for {}-{:02}", year, month)).styled(title_style));
-    doc.push(Break::new(1.5));
+    let heading_style = Style::new().bold().with_font_size(14);
+    let normal_style = Style::new().with_font_size(10);
+    let small_style = Style::new().with_font_size(9);
+    let bold_style = Style::new().bold().with_font_size(10);
 
-    // Process each project
-    for (project, proj_entries) in &entries_by_project {
-        let rate_info = project_rates.get(project);
-        if rate_info.is_some() {
-            has_any_rates = true;
+    // === HEADER: Invoice title and number ===
+    doc.push(Paragraph::new(format!("INVOICE #{:04}", params.invoice_number)).styled(title_style));
+    doc.push(Break::new(1.0));
+
+    // === FROM / TO Section ===
+    // Create a simple two-column layout using text
+
+    // From (Your business info)
+    if !params.settings.business_name.is_empty() {
+        doc.push(Paragraph::new("From:").styled(bold_style));
+        doc.push(Paragraph::new(&params.settings.business_name).styled(normal_style));
+        let addr = params.settings.formatted_address();
+        if !addr.is_empty() {
+            for line in addr.lines() {
+                doc.push(Paragraph::new(line).styled(small_style));
+            }
         }
+        if !params.settings.email.is_empty() {
+            doc.push(Paragraph::new(&params.settings.email).styled(small_style));
+        }
+        if !params.settings.phone.is_empty() {
+            doc.push(Paragraph::new(&params.settings.phone).styled(small_style));
+        }
+        if !params.settings.tax_id.is_empty() {
+            doc.push(
+                Paragraph::new(format!("Tax ID: {}", params.settings.tax_id)).styled(small_style),
+            );
+        }
+        doc.push(Break::new(0.5));
+    }
+
+    // To (Client info)
+    if let Some(client) = params.client {
+        doc.push(Paragraph::new("Bill To:").styled(bold_style));
+        doc.push(Paragraph::new(&client.name).styled(normal_style));
+        if !client.contact_person.is_empty() {
+            doc.push(
+                Paragraph::new(format!("Attn: {}", client.contact_person)).styled(small_style),
+            );
+        }
+        let addr = client.formatted_address();
+        if !addr.is_empty() {
+            for line in addr.lines() {
+                doc.push(Paragraph::new(line).styled(small_style));
+            }
+        }
+        if !client.email.is_empty() {
+            doc.push(Paragraph::new(&client.email).styled(small_style));
+        }
+        doc.push(Break::new(0.5));
+    }
+
+    // === Invoice metadata ===
+    doc.push(Break::new(0.5));
+    doc.push(Paragraph::new(format!("Invoice Date: {}", date_issued)).styled(normal_style));
+    doc.push(Paragraph::new(format!("Due Date: {}", due_date)).styled(normal_style));
+    doc.push(
+        Paragraph::new(format!("Terms: {}", params.settings.default_payment_terms))
+            .styled(normal_style),
+    );
+    doc.push(
+        Paragraph::new(format!("Period: {}-{:02}", params.year, params.month)).styled(normal_style),
+    );
+    doc.push(Break::new(1.0));
+
+    // === LINE ITEMS ===
+    doc.push(Paragraph::new("Services").styled(heading_style));
+    doc.push(Break::new(0.5));
+
+    let mut subtotal = 0.0;
+
+    for (project, proj_entries) in &entries_by_project {
+        let rate_info = params.project_rates.get(project);
 
         // Project header
-        let project_style = Style::new().bold().with_font_size(14);
+        let project_style = Style::new().bold().with_font_size(12);
         doc.push(Paragraph::new(format!("Project: {}", project)).styled(project_style));
 
         if let Some(r) = rate_info {
-            let rate_style = Style::new().with_font_size(10).italic();
+            let rate_style = Style::new().with_font_size(9).italic();
             doc.push(
                 Paragraph::new(format!("Rate: {}{:.2}/hr", r.currency, r.rate)).styled(rate_style),
             );
         }
-        doc.push(Break::new(0.5));
+        doc.push(Break::new(0.3));
 
         // Create table for entries
-        let mut table = TableLayout::new(vec![3, 2, 2, 1]);
+        let mut table = TableLayout::new(vec![4, 2, 2, 1]);
         table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(
             false, false, false,
         ));
 
         // Table header
-        let header_style = Style::new().bold().with_font_size(10);
+        let header_style = Style::new().bold().with_font_size(9);
         let mut header_row = table.row();
         header_row.push_element(Paragraph::new("Description").styled(header_style));
         header_row.push_element(Paragraph::new("Start").styled(header_style));
@@ -170,7 +260,7 @@ pub fn write_invoice(
         header_row.push_element(Paragraph::new("Hours").styled(header_style));
         header_row.push().expect("Failed to push header row");
 
-        let cell_style = Style::new().with_font_size(9);
+        let cell_style = Style::new().with_font_size(8);
         let mut project_total = 0.0;
 
         for entry in proj_entries {
@@ -182,12 +272,11 @@ pub fn write_invoice(
                 let mut row = table.row();
                 row.push_element(Paragraph::new(&entry.description).styled(cell_style));
                 row.push_element(
-                    Paragraph::new(start_local.format("%Y-%m-%d %H:%M").to_string())
+                    Paragraph::new(start_local.format("%m/%d %H:%M").to_string())
                         .styled(cell_style),
                 );
                 row.push_element(
-                    Paragraph::new(end_local.format("%Y-%m-%d %H:%M").to_string())
-                        .styled(cell_style),
+                    Paragraph::new(end_local.format("%m/%d %H:%M").to_string()).styled(cell_style),
                 );
                 row.push_element(Paragraph::new(format!("{:.2}", hours)).styled(cell_style));
                 row.push().expect("Failed to push row");
@@ -197,45 +286,53 @@ pub fn write_invoice(
         }
 
         doc.push(table);
-        doc.push(Break::new(0.3));
+        doc.push(Break::new(0.2));
 
         // Project subtotal
-        let subtotal_style = Style::new().bold().with_font_size(10);
         if let Some(r) = rate_info {
             let project_cost = project_total * r.rate;
             doc.push(
                 Paragraph::new(format!(
-                    "Subtotal: {:.2} hrs × {}{:.2} = {}{:.2}",
+                    "  {:.2} hrs × {}{:.2} = {}{:.2}",
                     project_total, r.currency, r.rate, r.currency, project_cost
                 ))
-                .styled(subtotal_style),
+                .styled(bold_style),
             );
-            total_cost += project_cost;
+            subtotal += project_cost;
         } else {
-            doc.push(
-                Paragraph::new(format!("Subtotal: {:.2} hrs", project_total))
-                    .styled(subtotal_style),
-            );
+            doc.push(Paragraph::new(format!("  {:.2} hrs", project_total)).styled(bold_style));
         }
 
-        total_hours += project_total;
-        doc.push(Break::new(1.0));
+        doc.push(Break::new(0.8));
     }
 
-    // Grand total
+    // === TOTALS ===
     doc.push(Break::new(0.5));
-    let total_style = Style::new().bold().with_font_size(14);
 
-    if has_any_rates {
+    let total_style = Style::new().bold().with_font_size(12);
+
+    doc.push(Paragraph::new(format!("Subtotal: ${:.2}", subtotal)).styled(normal_style));
+
+    let tax_amount = subtotal * (params.tax_rate / 100.0);
+    if params.tax_rate > 0.0 {
         doc.push(
-            Paragraph::new(format!(
-                "Total: {:.2} hours | ${:.2}",
-                total_hours, total_cost
-            ))
-            .styled(total_style),
+            Paragraph::new(format!("Tax ({:.1}%): ${:.2}", params.tax_rate, tax_amount))
+                .styled(normal_style),
         );
-    } else {
-        doc.push(Paragraph::new(format!("Total: {:.2} hours", total_hours)).styled(total_style));
+    }
+
+    let total = subtotal + tax_amount;
+    doc.push(Break::new(0.3));
+    doc.push(Paragraph::new(format!("TOTAL DUE: ${:.2}", total)).styled(total_style));
+
+    // === PAYMENT INSTRUCTIONS ===
+    if !params.settings.payment_instructions.is_empty() {
+        doc.push(Break::new(1.5));
+        doc.push(Paragraph::new("Payment Instructions").styled(heading_style));
+        doc.push(Break::new(0.3));
+        for line in params.settings.payment_instructions.lines() {
+            doc.push(Paragraph::new(line).styled(small_style));
+        }
     }
 
     // Render to file
@@ -244,9 +341,11 @@ pub fn write_invoice(
 
     Ok(InvoiceResult {
         file_path,
-        total_hours,
-        total_cost,
-        has_rates: has_any_rates,
+        date_issued,
+        due_date,
+        subtotal,
+        tax_amount,
+        total,
     })
 }
 
@@ -263,85 +362,4 @@ pub fn filter_entries_by_month(entries: &[Entry], year: i32, month: u32) -> Vec<
         })
         .cloned()
         .collect()
-}
-
-/// Generate invoice content as text (for preview/display)
-/// Returns the formatted invoice text
-pub fn generate_invoice_content(
-    entries: &[Entry],
-    project_rates: &HashMap<String, ProjectRate>,
-    year: i32,
-    month: u32,
-) -> (String, f64, f64, bool) {
-    // Group entries by project
-    let mut entries_by_project: HashMap<String, Vec<&Entry>> = HashMap::new();
-    for entry in entries {
-        entries_by_project
-            .entry(entry.project.clone())
-            .or_default()
-            .push(entry);
-    }
-
-    let mut content = format!("Invoice for {}-{:02}\n", year, month);
-    content.push_str("=========================\n\n");
-
-    let mut total_hours = 0.0;
-    let mut total_cost = 0.0;
-    let mut has_any_rates = false;
-
-    for (project, proj_entries) in &entries_by_project {
-        let rate_info = project_rates.get(project);
-        if rate_info.is_some() {
-            has_any_rates = true;
-        }
-
-        content.push_str(&format!("Project: {}\n", project));
-        if let Some(r) = rate_info {
-            content.push_str(&format!("Rate: {}{:.2}/hr\n", r.currency, r.rate));
-        }
-        content.push_str(&format!("{}\n", "-".repeat(40)));
-
-        let mut project_total = 0.0;
-        for entry in proj_entries {
-            if let Some(end) = entry.end {
-                let hours = (end - entry.start).num_seconds() as f64 / 3600.0;
-                let start_local = Local.from_utc_datetime(&entry.start.naive_utc());
-                let end_local = Local.from_utc_datetime(&end.naive_utc());
-
-                content.push_str(&format!(
-                    "  {:<24} | {} - {} | {:>6.2} hrs\n",
-                    entry.description,
-                    start_local.format("%Y-%m-%d %H:%M"),
-                    end_local.format("%Y-%m-%d %H:%M"),
-                    hours
-                ));
-                project_total += hours;
-            }
-        }
-
-        // Project subtotal with cost if rate exists
-        if let Some(r) = rate_info {
-            let project_cost = project_total * r.rate;
-            content.push_str(&format!(
-                "  Subtotal: {:>6.2} hrs x {}{:.2} = {}{:.2}\n\n",
-                project_total, r.currency, r.rate, r.currency, project_cost
-            ));
-            total_cost += project_cost;
-        } else {
-            content.push_str(&format!("  Subtotal: {:>6.2} hrs\n\n", project_total));
-        }
-        total_hours += project_total;
-    }
-
-    content.push_str(&format!("{}\n", "=".repeat(50)));
-    if has_any_rates {
-        content.push_str(&format!(
-            "Total: {:>6.2} hrs | ${:.2}\n",
-            total_hours, total_cost
-        ));
-    } else {
-        content.push_str(&format!("Total: {:>6.2} hrs\n", total_hours));
-    }
-
-    (content, total_hours, total_cost, has_any_rates)
 }

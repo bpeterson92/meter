@@ -1,6 +1,6 @@
 # Meter
 
-A simple time tracking CLI and TUI application for consultants to track billable hours and generate invoices.
+A simple time tracking CLI and TUI application for consultants to track billable hours and generate PDF invoices.
 
 ## Installation
 
@@ -63,45 +63,52 @@ meter tui
 
 ### Interactive TUI
 
-Launch the full‑featured terminal interface:
+Launch the full-featured terminal interface:
 
 ```bash
 meter tui
 ```
 
 **Screens:**
-- **Timer** (`1`) – start/stop timers with live elapsed time display
-- **Entries** (`2`) – view, delete, and bill time entries
-- **Invoice** (`3`) – generate invoices by month or custom selection
-- **Projects** (`4`) – manage project rates
-- **Pomodoro** (`5`) – configure Pomodoro timer settings
+- **Timer** (`1`) - start/stop timers with live elapsed time display
+- **Entries** (`2`) - view, edit, delete, and bill time entries
+- **Invoice** (`3`) - generate PDF invoices by month or custom selection
+- **Projects** (`4`) - manage project hourly rates
+- **Pomodoro** (`5`) - configure Pomodoro timer settings
+- **Clients** (`6`) - view configured clients
+- **Settings** (`7`) - view invoice/business settings
 
 **Key Bindings:**
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
-| `1-5` | Switch screens |
+| `1-7` | Switch screens |
 | `?` | Toggle help |
 | `s` | Start/stop timer (Timer screen) |
 | `p` | Toggle Pomodoro mode (Timer screen) |
 | `Space` | Acknowledge Pomodoro transition |
 | `j/k` | Navigate up/down |
+| `e` | Edit entry (Entries screen) |
 | `d` | Delete entry (Entries screen) |
 | `b` | Mark as billed (Entries screen) |
+| `u` | Unbill entry (Entries screen) |
 | `f` | Toggle filter (Entries screen) |
+| `c` | Cycle client selection (Invoice screen) |
 | `Enter` | Confirm/generate |
 | `Esc` | Cancel/back |
 
 ### CLI Commands
 
+#### Time Tracking
+
 ```bash
 # Start timing a project
-meter start --project "Acme Corp" --desc "Initial kick‑off"
+meter start --project "Acme Corp" --desc "Initial kick-off"
 
 # Stop the current timer
 meter stop
 
-# Add a manual 1.5‑hour entry
+# Add a manual 1.5-hour entry
 meter add --project "Beta Inc" --desc "Fixed bug #42" --duration 1.5
 
 # List all pending (unbilled) entries
@@ -118,21 +125,108 @@ meter bill
 
 # Unbill a specific entry (or all if no id)
 meter unbill --id 5
-meter unbill   # unbills all pending entries
+meter unbill
+```
 
-# Generate a text invoice for the current month
+#### Project Rate Management
+
+```bash
+# Set a project's hourly rate
+meter rate --project "Acme Corp" --rate 150.00
+
+# View a project's current rate
+meter rate --project "Acme Corp"
+
+# List all projects with their rates
+meter projects
+```
+
+#### Invoice Generation
+
+Meter generates professional PDF invoices with your business information, client details, line items, and payment instructions.
+
+```bash
+# Generate a PDF invoice for the current month
 meter invoice
 
 # Generate an invoice for a specific month/year
 meter invoice --month 11 --year 2025
 
-# Set or view a project's hourly rate
-meter rate --project "Acme Corp" --rate 150.00   # set rate
-meter rate --project "Acme Corp"                  # view rate
+# Generate an invoice for a specific client
+meter invoice --client 1
 
-# List all projects with their current rates
-meter projects
+# Generate an invoice with a custom tax rate
+meter invoice --tax-rate 8.5
+```
 
+**Invoice Features:**
+- Professional PDF format with proper layout
+- Your business name, address, and contact info
+- Client billing information
+- Auto-incrementing invoice numbers
+- Itemized time entries with hourly rates
+- Tax calculation
+- Payment terms and due date
+- Payment instructions
+
+#### Invoice Settings (Your Business Info)
+
+Configure your business information that appears on invoices:
+
+```bash
+# View current settings
+meter invoice-settings
+
+# Set business information
+meter invoice-settings \
+  --business-name "Your Consulting LLC" \
+  --street "123 Main St" \
+  --city "San Francisco" \
+  --state "CA" \
+  --postal "94102" \
+  --country "USA" \
+  --email "billing@yourconsulting.com" \
+  --phone "(555) 123-4567" \
+  --tax-id "12-3456789"
+
+# Set payment details
+meter invoice-settings \
+  --payment-terms "Net 30" \
+  --default-tax-rate 0 \
+  --payment-instructions "Pay via ACH to Account #12345"
+```
+
+#### Client Management
+
+Manage clients for invoicing:
+
+```bash
+# Add a new client
+meter client add \
+  --name "Acme Corporation" \
+  --contact "John Smith" \
+  --street "456 Corporate Blvd" \
+  --city "New York" \
+  --state "NY" \
+  --postal "10001" \
+  --country "USA" \
+  --email "ap@acmecorp.com"
+
+# List all clients
+meter client list
+
+# Edit a client
+meter client edit --id 1 --email "newemail@acmecorp.com"
+
+# Delete a client
+meter client delete --id 1
+```
+
+#### Pomodoro Timer
+
+Configure the Pomodoro timer mode for focused work sessions:
+
+```bash
 # View Pomodoro settings
 meter pomodoro
 
@@ -142,48 +236,36 @@ meter pomodoro --enable
 # Disable Pomodoro mode
 meter pomodoro --disable
 
-# Configure Pomodoro durations (in minutes)
+# Configure durations (in minutes)
 meter pomodoro --work 25 --short-break 5 --long-break 15 --cycles 4
 ```
 
-#### Project Rate Management
-
-`meter rate` lets you store a per‑project hourly rate and currency symbol.  
-Examples:
-- `meter rate --project "Acme Corp" --rate 150` → set rate to $150/hr.  
-- `meter rate --project "Acme Corp"`      → show current rate for that project.
-
-#### List Projects
-
-`meter projects` prints a table of all known projects and the rate that has been assigned to each (or “—” if none).
-
-#### Unbill Entries
-
-`meter unbill` reverts the billed status of entries.  
-- `meter unbill --id 10` unbills entry 10.  
-- `meter unbill` unbills every entry that is currently marked as billed.
-
-#### Pomodoro Timer
-
-`meter pomodoro` configures the Pomodoro timer mode. When enabled, work periods automatically pause after the configured duration, prompting you to take a break.
-
 **Settings:**
-- `--work` – Work period duration in minutes (default: 45)
-- `--short-break` – Short break duration in minutes (default: 15)
-- `--long-break` – Long break duration in minutes (default: 60)
-- `--cycles` – Number of work cycles before a long break (default: 4)
+- `--work` - Work period duration in minutes (default: 45)
+- `--short-break` - Short break duration in minutes (default: 15)
+- `--long-break` - Long break duration in minutes (default: 60)
+- `--cycles` - Number of work cycles before a long break (default: 4)
 
 **Behavior:**
-- Work period ends → timer pauses → notification
+- Work period ends -> timer pauses -> notification
 - Press Space (TUI) or hotkey (menubar) to start break
-- Break ends → notification → press to resume work
+- Break ends -> notification -> press to resume work
 - Break time is NOT included in billable hours
 
 ## Data Storage
 
-All data is stored in a SQLite database located at `~/.meter/db.sqlite`.  
-The database holds two tables: `entries` (time records) and `projects` (project names and rates).  
-Invoices are written as plain-text files to `~/.meter/invoices/invoice_YYYY_MM.txt`.
+All data is stored in a SQLite database located at `~/.meter/db.sqlite`.
+
+**Database Tables:**
+- `entries` - Time tracking records
+- `projects` - Project names and hourly rates
+- `pomodoro_config` - Pomodoro timer settings
+- `invoice_settings` - Your business information
+- `clients` - Client billing information
+- `invoices` - Invoice history and numbering
+
+**Output Files:**
+- PDF invoices: `~/.meter/invoices/invoice_NNNN_YYYY_MM.pdf`
 
 ## License
 

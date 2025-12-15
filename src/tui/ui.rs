@@ -7,7 +7,10 @@ use ratatui::{
 };
 
 use super::app::{App, EditField, InputMode, PomodoroState, Screen};
-use super::views::{draw_entries, draw_invoice, draw_pomodoro, draw_projects, draw_timer};
+use super::views::{
+    draw_clients, draw_entries, draw_invoice, draw_pomodoro, draw_projects, draw_settings,
+    draw_timer,
+};
 
 /// Main draw function that delegates to screen-specific views
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -28,6 +31,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Invoice => draw_invoice(frame, app, chunks[1]),
         Screen::Projects => draw_projects(frame, app, chunks[1]),
         Screen::Pomodoro => draw_pomodoro(frame, app, chunks[1]),
+        Screen::Clients => draw_clients(frame, app, chunks[1]),
+        Screen::Settings => draw_settings(frame, app, chunks[1]),
     }
 
     draw_footer(frame, app, chunks[2]);
@@ -105,6 +110,26 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Span::styled(" [5] Pomodoro ", Style::default().fg(Color::DarkGray))
         },
+        if app.current_screen == Screen::Clients {
+            Span::styled(
+                " [6] Clients ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" [6] Clients ", Style::default().fg(Color::DarkGray))
+        },
+        if app.current_screen == Screen::Settings {
+            Span::styled(
+                " [7] Settings ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" [7] Settings ", Style::default().fg(Color::DarkGray))
+        },
     ];
 
     let header = Paragraph::new(Line::from(tabs))
@@ -143,6 +168,8 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Pomodoro => {
             "[Tab] Next field  [Enter] Toggle/Save  [Esc] Cancel  [?] Help  [q] Quit"
         }
+        Screen::Clients => "[j/k] Navigate  [a] Add  [e] Edit  [d] Delete  [?] Help  [q] Quit",
+        Screen::Settings => "[e] Edit  [?] Help  [q] Quit",
     };
 
     let status = if let Some(msg) = &app.status_message {

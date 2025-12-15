@@ -2,8 +2,8 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike,
 use std::collections::HashMap;
 
 use crate::db::Db;
-use crate::invoice::{ProjectRate, write_invoice};
-use crate::models::{Entry, PomodoroConfig, Project};
+use crate::invoice::{InvoiceParams, ProjectRate, write_invoice};
+use crate::models::{Client, Entry, InvoiceSettings, PomodoroConfig, Project};
 use crate::notification;
 
 /// The active screen/view in the TUI
@@ -15,6 +15,8 @@ pub enum Screen {
     Invoice,
     Projects,
     Pomodoro,
+    Clients,
+    Settings,
 }
 
 /// Running state of the application
@@ -55,6 +57,10 @@ pub enum InputMode {
     EditingPomodoroShortBreak,
     EditingPomodoroLongBreak,
     EditingPomodoroCycles,
+    // Client editing modes
+    EditingClient,
+    // Invoice settings editing modes
+    EditingSettings,
 }
 
 /// Which field is selected in the edit entry dialog
@@ -87,6 +93,38 @@ pub enum PomodoroField {
     ShortBreak,
     LongBreak,
     Cycles,
+}
+
+/// Which field is selected in the client edit dialog
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ClientField {
+    #[default]
+    Name,
+    Contact,
+    Street,
+    City,
+    State,
+    Postal,
+    Country,
+    Email,
+}
+
+/// Which field is selected in the settings edit dialog
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum SettingsField {
+    #[default]
+    BusinessName,
+    Street,
+    City,
+    State,
+    Postal,
+    Country,
+    Email,
+    Phone,
+    TaxId,
+    PaymentTerms,
+    DefaultTaxRate,
+    PaymentInstructions,
 }
 
 /// Main application state
@@ -154,6 +192,44 @@ pub struct App {
     pub pomodoro_short_break_input: String,
     pub pomodoro_long_break_input: String,
     pub pomodoro_cycles_input: String,
+
+    // Clients state
+    pub clients: Vec<Client>,
+    pub selected_client_index: usize,
+    pub selected_invoice_client: Option<i64>,
+
+    // Client editing state
+    pub editing_client: Option<Client>,
+    pub adding_new_client: bool,
+    pub confirm_delete_client: Option<i64>,
+    pub client_field: ClientField,
+    pub client_name_input: String,
+    pub client_contact_input: String,
+    pub client_street_input: String,
+    pub client_city_input: String,
+    pub client_state_input: String,
+    pub client_postal_input: String,
+    pub client_country_input: String,
+    pub client_email_input: String,
+
+    // Invoice settings state
+    pub invoice_settings: InvoiceSettings,
+
+    // Settings editing state
+    pub editing_settings: bool,
+    pub settings_field: SettingsField,
+    pub settings_business_name_input: String,
+    pub settings_street_input: String,
+    pub settings_city_input: String,
+    pub settings_state_input: String,
+    pub settings_postal_input: String,
+    pub settings_country_input: String,
+    pub settings_email_input: String,
+    pub settings_phone_input: String,
+    pub settings_tax_id_input: String,
+    pub settings_payment_terms_input: String,
+    pub settings_default_tax_rate_input: String,
+    pub settings_payment_instructions_input: String,
 }
 
 /// All possible application messages/events
@@ -237,6 +313,35 @@ pub enum Message {
     PomodoroFieldBackspace,
     SavePomodoroConfig,
     CancelPomodoroEdit,
+
+    // Client actions
+    RefreshClients,
+    SelectNextClient,
+    SelectPreviousClient,
+    SelectInvoiceClient(Option<i64>),
+    CycleInvoiceClient,
+
+    // Client editing actions
+    AddClient,
+    EditClient(i64),
+    DeleteClient(i64),
+    ConfirmDeleteClient,
+    CancelDeleteClient,
+    ClientNextField,
+    ClientPrevField,
+    ClientFieldInput(char),
+    ClientFieldBackspace,
+    SaveClient,
+    CancelEditClient,
+
+    // Settings editing actions
+    EditSettings,
+    SettingsNextField,
+    SettingsPrevField,
+    SettingsFieldInput(char),
+    SettingsFieldBackspace,
+    SaveSettings,
+    CancelEditSettings,
 }
 
 impl App {
@@ -246,6 +351,8 @@ impl App {
         app.refresh_entries(db);
         app.refresh_active_timer(db);
         app.refresh_pomodoro_config(db);
+        app.refresh_clients(db);
+        app.refresh_invoice_settings(db);
 
         // If there's an active timer and Pomodoro is enabled, set state to Working
         if app.active_entry.is_some() && app.pomodoro_config.enabled {
@@ -935,6 +1042,347 @@ impl App {
                 self.pomodoro_field = PomodoroField::Enabled;
                 None
             }
+
+            // Client actions
+            Message::RefreshClients => {
+                self.refresh_clients(db);
+                None
+            }
+            Message::SelectNextClient => {
+                if !self.clients.is_empty() {
+                    self.selected_client_index =
+                        (self.selected_client_index + 1) % self.clients.len();
+                }
+                None
+            }
+            Message::SelectPreviousClient => {
+                if !self.clients.is_empty() {
+                    self.selected_client_index = if self.selected_client_index == 0 {
+                        self.clients.len() - 1
+                    } else {
+                        self.selected_client_index - 1
+                    };
+                }
+                None
+            }
+            Message::SelectInvoiceClient(client_id) => {
+                self.selected_invoice_client = client_id;
+                None
+            }
+            Message::CycleInvoiceClient => {
+                // Cycle through: None -> Client 1 -> Client 2 -> ... -> None
+                if self.clients.is_empty() {
+                    self.selected_invoice_client = None;
+                } else {
+                    match self.selected_invoice_client {
+                        None => {
+                            self.selected_invoice_client = Some(self.clients[0].id);
+                        }
+                        Some(current_id) => {
+                            // Find current index and move to next
+                            if let Some(idx) = self.clients.iter().position(|c| c.id == current_id)
+                            {
+                                if idx + 1 < self.clients.len() {
+                                    self.selected_invoice_client = Some(self.clients[idx + 1].id);
+                                } else {
+                                    self.selected_invoice_client = None;
+                                }
+                            } else {
+                                self.selected_invoice_client = None;
+                            }
+                        }
+                    }
+                }
+                None
+            }
+
+            // Client editing actions
+            Message::AddClient => {
+                self.editing_client = Some(Client::default());
+                self.adding_new_client = true;
+                self.client_field = ClientField::Name;
+                self.clear_client_inputs();
+                self.input_mode = InputMode::EditingClient;
+                None
+            }
+            Message::EditClient(id) => {
+                if let Some(client) = self.clients.iter().find(|c| c.id == id).cloned() {
+                    self.editing_client = Some(client.clone());
+                    self.adding_new_client = false;
+                    self.client_field = ClientField::Name;
+                    self.load_client_inputs(&client);
+                    self.input_mode = InputMode::EditingClient;
+                }
+                None
+            }
+            Message::DeleteClient(id) => {
+                self.confirm_delete_client = Some(id);
+                None
+            }
+            Message::ConfirmDeleteClient => {
+                if let Some(id) = self.confirm_delete_client.take() {
+                    if db.delete_client(id).is_ok() {
+                        self.status_message = Some(format!("Client {} deleted", id));
+                        if self.selected_client_index > 0 {
+                            self.selected_client_index -= 1;
+                        }
+                        return Some(Message::RefreshClients);
+                    }
+                }
+                None
+            }
+            Message::CancelDeleteClient => {
+                self.confirm_delete_client = None;
+                None
+            }
+            Message::ClientNextField => {
+                self.client_field = match self.client_field {
+                    ClientField::Name => ClientField::Contact,
+                    ClientField::Contact => ClientField::Street,
+                    ClientField::Street => ClientField::City,
+                    ClientField::City => ClientField::State,
+                    ClientField::State => ClientField::Postal,
+                    ClientField::Postal => ClientField::Country,
+                    ClientField::Country => ClientField::Email,
+                    ClientField::Email => ClientField::Name,
+                };
+                None
+            }
+            Message::ClientPrevField => {
+                self.client_field = match self.client_field {
+                    ClientField::Name => ClientField::Email,
+                    ClientField::Contact => ClientField::Name,
+                    ClientField::Street => ClientField::Contact,
+                    ClientField::City => ClientField::Street,
+                    ClientField::State => ClientField::City,
+                    ClientField::Postal => ClientField::State,
+                    ClientField::Country => ClientField::Postal,
+                    ClientField::Email => ClientField::Country,
+                };
+                None
+            }
+            Message::ClientFieldInput(c) => {
+                match self.client_field {
+                    ClientField::Name => self.client_name_input.push(c),
+                    ClientField::Contact => self.client_contact_input.push(c),
+                    ClientField::Street => self.client_street_input.push(c),
+                    ClientField::City => self.client_city_input.push(c),
+                    ClientField::State => self.client_state_input.push(c),
+                    ClientField::Postal => self.client_postal_input.push(c),
+                    ClientField::Country => self.client_country_input.push(c),
+                    ClientField::Email => self.client_email_input.push(c),
+                }
+                None
+            }
+            Message::ClientFieldBackspace => {
+                match self.client_field {
+                    ClientField::Name => {
+                        self.client_name_input.pop();
+                    }
+                    ClientField::Contact => {
+                        self.client_contact_input.pop();
+                    }
+                    ClientField::Street => {
+                        self.client_street_input.pop();
+                    }
+                    ClientField::City => {
+                        self.client_city_input.pop();
+                    }
+                    ClientField::State => {
+                        self.client_state_input.pop();
+                    }
+                    ClientField::Postal => {
+                        self.client_postal_input.pop();
+                    }
+                    ClientField::Country => {
+                        self.client_country_input.pop();
+                    }
+                    ClientField::Email => {
+                        self.client_email_input.pop();
+                    }
+                }
+                None
+            }
+            Message::SaveClient => {
+                let client = Client {
+                    id: self.editing_client.as_ref().map(|c| c.id).unwrap_or(0),
+                    name: self.client_name_input.clone(),
+                    contact_person: self.client_contact_input.clone(),
+                    address_street: self.client_street_input.clone(),
+                    address_city: self.client_city_input.clone(),
+                    address_state: self.client_state_input.clone(),
+                    address_postal: self.client_postal_input.clone(),
+                    address_country: self.client_country_input.clone(),
+                    email: self.client_email_input.clone(),
+                };
+
+                if self.adding_new_client {
+                    if db.add_client(&client).is_ok() {
+                        self.status_message = Some(format!("Client '{}' added", client.name));
+                    } else {
+                        self.status_message = Some("Failed to add client".to_string());
+                    }
+                } else if db.update_client(&client).is_ok() {
+                    self.status_message = Some(format!("Client '{}' updated", client.name));
+                } else {
+                    self.status_message = Some("Failed to update client".to_string());
+                }
+
+                self.editing_client = None;
+                self.adding_new_client = false;
+                self.input_mode = InputMode::Normal;
+                self.clear_client_inputs();
+                Some(Message::RefreshClients)
+            }
+            Message::CancelEditClient => {
+                self.editing_client = None;
+                self.adding_new_client = false;
+                self.input_mode = InputMode::Normal;
+                self.clear_client_inputs();
+                None
+            }
+
+            // Settings editing actions
+            Message::EditSettings => {
+                self.editing_settings = true;
+                self.settings_field = SettingsField::BusinessName;
+                self.load_settings_inputs();
+                self.input_mode = InputMode::EditingSettings;
+                None
+            }
+            Message::SettingsNextField => {
+                self.settings_field = match self.settings_field {
+                    SettingsField::BusinessName => SettingsField::Street,
+                    SettingsField::Street => SettingsField::City,
+                    SettingsField::City => SettingsField::State,
+                    SettingsField::State => SettingsField::Postal,
+                    SettingsField::Postal => SettingsField::Country,
+                    SettingsField::Country => SettingsField::Email,
+                    SettingsField::Email => SettingsField::Phone,
+                    SettingsField::Phone => SettingsField::TaxId,
+                    SettingsField::TaxId => SettingsField::PaymentTerms,
+                    SettingsField::PaymentTerms => SettingsField::DefaultTaxRate,
+                    SettingsField::DefaultTaxRate => SettingsField::PaymentInstructions,
+                    SettingsField::PaymentInstructions => SettingsField::BusinessName,
+                };
+                None
+            }
+            Message::SettingsPrevField => {
+                self.settings_field = match self.settings_field {
+                    SettingsField::BusinessName => SettingsField::PaymentInstructions,
+                    SettingsField::Street => SettingsField::BusinessName,
+                    SettingsField::City => SettingsField::Street,
+                    SettingsField::State => SettingsField::City,
+                    SettingsField::Postal => SettingsField::State,
+                    SettingsField::Country => SettingsField::Postal,
+                    SettingsField::Email => SettingsField::Country,
+                    SettingsField::Phone => SettingsField::Email,
+                    SettingsField::TaxId => SettingsField::Phone,
+                    SettingsField::PaymentTerms => SettingsField::TaxId,
+                    SettingsField::DefaultTaxRate => SettingsField::PaymentTerms,
+                    SettingsField::PaymentInstructions => SettingsField::DefaultTaxRate,
+                };
+                None
+            }
+            Message::SettingsFieldInput(c) => {
+                match self.settings_field {
+                    SettingsField::BusinessName => self.settings_business_name_input.push(c),
+                    SettingsField::Street => self.settings_street_input.push(c),
+                    SettingsField::City => self.settings_city_input.push(c),
+                    SettingsField::State => self.settings_state_input.push(c),
+                    SettingsField::Postal => self.settings_postal_input.push(c),
+                    SettingsField::Country => self.settings_country_input.push(c),
+                    SettingsField::Email => self.settings_email_input.push(c),
+                    SettingsField::Phone => self.settings_phone_input.push(c),
+                    SettingsField::TaxId => self.settings_tax_id_input.push(c),
+                    SettingsField::PaymentTerms => self.settings_payment_terms_input.push(c),
+                    SettingsField::DefaultTaxRate => {
+                        if c.is_ascii_digit()
+                            || (c == '.' && !self.settings_default_tax_rate_input.contains('.'))
+                        {
+                            self.settings_default_tax_rate_input.push(c);
+                        }
+                    }
+                    SettingsField::PaymentInstructions => {
+                        self.settings_payment_instructions_input.push(c)
+                    }
+                }
+                None
+            }
+            Message::SettingsFieldBackspace => {
+                match self.settings_field {
+                    SettingsField::BusinessName => {
+                        self.settings_business_name_input.pop();
+                    }
+                    SettingsField::Street => {
+                        self.settings_street_input.pop();
+                    }
+                    SettingsField::City => {
+                        self.settings_city_input.pop();
+                    }
+                    SettingsField::State => {
+                        self.settings_state_input.pop();
+                    }
+                    SettingsField::Postal => {
+                        self.settings_postal_input.pop();
+                    }
+                    SettingsField::Country => {
+                        self.settings_country_input.pop();
+                    }
+                    SettingsField::Email => {
+                        self.settings_email_input.pop();
+                    }
+                    SettingsField::Phone => {
+                        self.settings_phone_input.pop();
+                    }
+                    SettingsField::TaxId => {
+                        self.settings_tax_id_input.pop();
+                    }
+                    SettingsField::PaymentTerms => {
+                        self.settings_payment_terms_input.pop();
+                    }
+                    SettingsField::DefaultTaxRate => {
+                        self.settings_default_tax_rate_input.pop();
+                    }
+                    SettingsField::PaymentInstructions => {
+                        self.settings_payment_instructions_input.pop();
+                    }
+                }
+                None
+            }
+            Message::SaveSettings => {
+                let settings = InvoiceSettings {
+                    business_name: self.settings_business_name_input.clone(),
+                    address_street: self.settings_street_input.clone(),
+                    address_city: self.settings_city_input.clone(),
+                    address_state: self.settings_state_input.clone(),
+                    address_postal: self.settings_postal_input.clone(),
+                    address_country: self.settings_country_input.clone(),
+                    email: self.settings_email_input.clone(),
+                    phone: self.settings_phone_input.clone(),
+                    tax_id: self.settings_tax_id_input.clone(),
+                    payment_instructions: self.settings_payment_instructions_input.clone(),
+                    default_payment_terms: self.settings_payment_terms_input.clone(),
+                    default_tax_rate: self.settings_default_tax_rate_input.parse().unwrap_or(0.0),
+                };
+
+                if db.set_invoice_settings(&settings).is_ok() {
+                    self.invoice_settings = settings;
+                    self.status_message = Some("Settings saved".to_string());
+                } else {
+                    self.status_message = Some("Failed to save settings".to_string());
+                }
+
+                self.editing_settings = false;
+                self.input_mode = InputMode::Normal;
+                None
+            }
+            Message::CancelEditSettings => {
+                self.editing_settings = false;
+                self.input_mode = InputMode::Normal;
+                self.load_settings_inputs();
+                None
+            }
         }
     }
 
@@ -1040,13 +1488,46 @@ impl App {
             InvoiceMode::SelectEntries => (now.year(), now.month()),
         };
 
+        // Get invoice settings and next invoice number
+        let settings = db.get_invoice_settings().unwrap_or_default();
+        let invoice_number = db.get_next_invoice_number().unwrap_or(1);
+
+        let params = InvoiceParams {
+            entries: &entries,
+            project_rates: &self.project_rates,
+            year,
+            month,
+            invoice_number,
+            settings: &settings,
+            client: self.get_selected_invoice_client(),
+            tax_rate: settings.default_tax_rate,
+        };
+
         // Use shared invoice generation
-        match write_invoice(&entries, &self.project_rates, year, month) {
+        match write_invoice(&params) {
             Ok(result) => {
-                self.status_message = Some(format!("Invoice written to {}", result.file_path));
+                // Record the invoice
+                let invoice_record = crate::models::Invoice {
+                    id: 0,
+                    invoice_number,
+                    client_id: self.selected_invoice_client,
+                    date_issued: result.date_issued.clone(),
+                    due_date: result.due_date.clone(),
+                    subtotal: result.subtotal,
+                    tax_rate: settings.default_tax_rate,
+                    tax_amount: result.tax_amount,
+                    total: result.total,
+                    file_path: result.file_path.clone(),
+                };
+                let _ = db.record_invoice(&invoice_record);
+
+                self.status_message = Some(format!(
+                    "Invoice #{} written to {}",
+                    invoice_number, result.file_path
+                ));
             }
-            Err(_) => {
-                self.status_message = Some("Failed to write invoice".to_string());
+            Err(e) => {
+                self.status_message = Some(format!("Failed to write invoice: {}", e));
             }
         }
     }
@@ -1057,6 +1538,23 @@ impl App {
 
     fn refresh_pomodoro_config(&mut self, db: &Db) {
         self.pomodoro_config = db.get_pomodoro_config().unwrap_or_default();
+    }
+
+    fn refresh_clients(&mut self, db: &Db) {
+        self.clients = db.list_clients().unwrap_or_default();
+        if self.selected_client_index >= self.clients.len() && !self.clients.is_empty() {
+            self.selected_client_index = self.clients.len() - 1;
+        }
+    }
+
+    fn refresh_invoice_settings(&mut self, db: &Db) {
+        self.invoice_settings = db.get_invoice_settings().unwrap_or_default();
+    }
+
+    /// Get the selected client for invoicing
+    pub fn get_selected_invoice_client(&self) -> Option<&Client> {
+        self.selected_invoice_client
+            .and_then(|id| self.clients.iter().find(|c| c.id == id))
     }
 
     /// Check if the next break should be a long break
@@ -1093,5 +1591,51 @@ impl App {
         self.pomodoro_short_break_input = self.pomodoro_config.short_break.to_string();
         self.pomodoro_long_break_input = self.pomodoro_config.long_break.to_string();
         self.pomodoro_cycles_input = self.pomodoro_config.cycles_before_long.to_string();
+    }
+
+    /// Load client values into input fields
+    fn load_client_inputs(&mut self, client: &Client) {
+        self.client_name_input = client.name.clone();
+        self.client_contact_input = client.contact_person.clone();
+        self.client_street_input = client.address_street.clone();
+        self.client_city_input = client.address_city.clone();
+        self.client_state_input = client.address_state.clone();
+        self.client_postal_input = client.address_postal.clone();
+        self.client_country_input = client.address_country.clone();
+        self.client_email_input = client.email.clone();
+    }
+
+    /// Clear client input fields
+    fn clear_client_inputs(&mut self) {
+        self.client_name_input.clear();
+        self.client_contact_input.clear();
+        self.client_street_input.clear();
+        self.client_city_input.clear();
+        self.client_state_input.clear();
+        self.client_postal_input.clear();
+        self.client_country_input.clear();
+        self.client_email_input.clear();
+    }
+
+    /// Load invoice settings values into input fields
+    fn load_settings_inputs(&mut self) {
+        self.settings_business_name_input = self.invoice_settings.business_name.clone();
+        self.settings_street_input = self.invoice_settings.address_street.clone();
+        self.settings_city_input = self.invoice_settings.address_city.clone();
+        self.settings_state_input = self.invoice_settings.address_state.clone();
+        self.settings_postal_input = self.invoice_settings.address_postal.clone();
+        self.settings_country_input = self.invoice_settings.address_country.clone();
+        self.settings_email_input = self.invoice_settings.email.clone();
+        self.settings_phone_input = self.invoice_settings.phone.clone();
+        self.settings_tax_id_input = self.invoice_settings.tax_id.clone();
+        self.settings_payment_terms_input = self.invoice_settings.default_payment_terms.clone();
+        self.settings_default_tax_rate_input = self.invoice_settings.default_tax_rate.to_string();
+        self.settings_payment_instructions_input =
+            self.invoice_settings.payment_instructions.clone();
+    }
+
+    /// Get the selected client for editing
+    pub fn get_selected_client(&self) -> Option<&Client> {
+        self.clients.get(self.selected_client_index)
     }
 }

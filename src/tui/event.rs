@@ -23,6 +23,17 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         };
     }
 
+    // Handle confirm delete client dialog
+    if app.confirm_delete_client.is_some() {
+        return match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => Some(Message::ConfirmDeleteClient),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                Some(Message::CancelDeleteClient)
+            }
+            _ => None,
+        };
+    }
+
     // Handle input modes
     match app.input_mode {
         InputMode::EditingProject => {
@@ -93,6 +104,28 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
                 _ => None,
             };
         }
+        InputMode::EditingClient => {
+            return match key.code {
+                KeyCode::Enter => Some(Message::SaveClient),
+                KeyCode::Esc => Some(Message::CancelEditClient),
+                KeyCode::Tab => Some(Message::ClientNextField),
+                KeyCode::BackTab => Some(Message::ClientPrevField),
+                KeyCode::Backspace => Some(Message::ClientFieldBackspace),
+                KeyCode::Char(c) => Some(Message::ClientFieldInput(c)),
+                _ => None,
+            };
+        }
+        InputMode::EditingSettings => {
+            return match key.code {
+                KeyCode::Enter => Some(Message::SaveSettings),
+                KeyCode::Esc => Some(Message::CancelEditSettings),
+                KeyCode::Tab => Some(Message::SettingsNextField),
+                KeyCode::BackTab => Some(Message::SettingsPrevField),
+                KeyCode::Backspace => Some(Message::SettingsFieldBackspace),
+                KeyCode::Char(c) => Some(Message::SettingsFieldInput(c)),
+                _ => None,
+            };
+        }
         InputMode::Normal => {}
     }
 
@@ -104,6 +137,8 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('3') => return Some(Message::SwitchScreen(Screen::Invoice)),
         KeyCode::Char('4') => return Some(Message::SwitchScreen(Screen::Projects)),
         KeyCode::Char('5') => return Some(Message::SwitchScreen(Screen::Pomodoro)),
+        KeyCode::Char('6') => return Some(Message::SwitchScreen(Screen::Clients)),
+        KeyCode::Char('7') => return Some(Message::SwitchScreen(Screen::Settings)),
         _ => {}
     }
 
@@ -114,6 +149,8 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         Screen::Invoice => handle_invoice_keys(key, app),
         Screen::Projects => handle_projects_keys(key, app),
         Screen::Pomodoro => handle_pomodoro_keys(key, app),
+        Screen::Clients => handle_clients_keys(key, app),
+        Screen::Settings => handle_settings_keys(key, app),
     }
 }
 
@@ -222,6 +259,11 @@ fn handle_entries_keys(key: KeyEvent, app: &App) -> Option<Message> {
 }
 
 fn handle_invoice_keys(key: KeyEvent, app: &App) -> Option<Message> {
+    // 'c' cycles through clients regardless of mode
+    if key.code == KeyCode::Char('c') || key.code == KeyCode::Char('C') {
+        return Some(Message::CycleInvoiceClient);
+    }
+
     if app.invoice_mode == InvoiceMode::SelectEntries {
         // In entry selection mode
         match key.code {
@@ -293,6 +335,36 @@ fn handle_pomodoro_keys(key: KeyEvent, app: &App) -> Option<Message> {
             };
             Some(Message::EnterInputMode(mode))
         }
+        _ => None,
+    }
+}
+
+fn handle_clients_keys(key: KeyEvent, app: &App) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Message::SelectNextClient),
+        KeyCode::Char('k') | KeyCode::Up => Some(Message::SelectPreviousClient),
+        KeyCode::Char('a') | KeyCode::Char('A') => Some(Message::AddClient),
+        KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+            if let Some(client) = app.get_selected_client() {
+                Some(Message::EditClient(client.id))
+            } else {
+                None
+            }
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            if let Some(client) = app.get_selected_client() {
+                Some(Message::DeleteClient(client.id))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn handle_settings_keys(key: KeyEvent, _app: &App) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => Some(Message::EditSettings),
         _ => None,
     }
 }

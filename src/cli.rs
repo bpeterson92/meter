@@ -49,12 +49,23 @@ pub enum Commands {
         id: Option<i64>,
     },
 
-    /// Generate a simple invoice text
+    /// Generate a PDF invoice
     Invoice {
+        /// Month (1-12). Defaults to current month.
         #[arg(short, long)]
         month: Option<u32>,
+
+        /// Year. Defaults to current year.
         #[arg(short, long)]
         year: Option<i32>,
+
+        /// Client ID to invoice
+        #[arg(short, long)]
+        client: Option<i64>,
+
+        /// Override tax rate for this invoice
+        #[arg(short, long)]
+        tax_rate: Option<f64>,
     },
 
     /// Launch the interactive TUI
@@ -103,5 +114,146 @@ pub enum Commands {
         /// Number of work cycles before a long break (default: 4)
         #[arg(short, long)]
         cycles: Option<i32>,
+    },
+
+    /// Configure invoice settings (your business info)
+    #[command(name = "invoice-settings")]
+    InvoiceSettings {
+        /// Business or personal name
+        #[arg(long)]
+        business_name: Option<String>,
+
+        /// Street address
+        #[arg(long)]
+        street: Option<String>,
+
+        /// City
+        #[arg(long)]
+        city: Option<String>,
+
+        /// State or province
+        #[arg(long)]
+        state: Option<String>,
+
+        /// Postal/ZIP code
+        #[arg(long)]
+        postal: Option<String>,
+
+        /// Country
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Email address
+        #[arg(long)]
+        email: Option<String>,
+
+        /// Phone number
+        #[arg(long)]
+        phone: Option<String>,
+
+        /// Tax ID / VAT number
+        #[arg(long)]
+        tax_id: Option<String>,
+
+        /// Payment instructions (bank details, PayPal, etc.)
+        #[arg(long)]
+        payment_instructions: Option<String>,
+
+        /// Default payment terms (e.g., "Net 30", "Due on receipt")
+        #[arg(long)]
+        payment_terms: Option<String>,
+
+        /// Default tax rate percentage (e.g., 8.5 for 8.5%)
+        #[arg(long)]
+        tax_rate: Option<f64>,
+    },
+
+    /// Manage clients
+    #[command(subcommand)]
+    Client(ClientCommands),
+}
+
+#[derive(Subcommand)]
+pub enum ClientCommands {
+    /// Add a new client
+    Add {
+        /// Client or company name
+        #[arg(long)]
+        name: String,
+
+        /// Contact person name
+        #[arg(long)]
+        contact: Option<String>,
+
+        /// Street address
+        #[arg(long)]
+        street: Option<String>,
+
+        /// City
+        #[arg(long)]
+        city: Option<String>,
+
+        /// State or province
+        #[arg(long)]
+        state: Option<String>,
+
+        /// Postal/ZIP code
+        #[arg(long)]
+        postal: Option<String>,
+
+        /// Country
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Email address
+        #[arg(long)]
+        email: Option<String>,
+    },
+
+    /// List all clients
+    List,
+
+    /// Edit a client
+    Edit {
+        /// Client ID
+        id: i64,
+
+        /// Client or company name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Contact person name
+        #[arg(long)]
+        contact: Option<String>,
+
+        /// Street address
+        #[arg(long)]
+        street: Option<String>,
+
+        /// City
+        #[arg(long)]
+        city: Option<String>,
+
+        /// State or province
+        #[arg(long)]
+        state: Option<String>,
+
+        /// Postal/ZIP code
+        #[arg(long)]
+        postal: Option<String>,
+
+        /// Country
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Email address
+        #[arg(long)]
+        email: Option<String>,
+    },
+
+    /// Delete a client
+    Delete {
+        /// Client ID
+        id: i64,
     },
 }

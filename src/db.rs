@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Result, params};
 
-use crate::models::{Entry, PomodoroConfig, Project};
+use crate::models::{Client, Entry, Invoice, InvoiceSettings, PomodoroConfig, Project};
 
 /// Wrapper around a SQLite connection.
 /// The inner `Connection` is intentionally private; use the `conn()` method to obtain
@@ -413,5 +413,233 @@ impl Db {
             params![if enabled { 1 } else { 0 }],
         )?;
         Ok(())
+    }
+
+    // === Invoice Settings Methods ===
+
+    /// Get the current invoice settings.
+    pub fn get_invoice_settings(&self) -> Result<InvoiceSettings> {
+        let mut stmt = self.conn.prepare(
+            "SELECT business_name, address_street, address_city, address_state,
+                    address_postal, address_country, email, phone, tax_id,
+                    payment_instructions, default_payment_terms, default_tax_rate
+             FROM invoice_settings WHERE id = 1",
+        )?;
+
+        stmt.query_row([], |row| {
+            Ok(InvoiceSettings {
+                business_name: row.get(0)?,
+                address_street: row.get(1)?,
+                address_city: row.get(2)?,
+                address_state: row.get(3)?,
+                address_postal: row.get(4)?,
+                address_country: row.get(5)?,
+                email: row.get(6)?,
+                phone: row.get(7)?,
+                tax_id: row.get(8)?,
+                payment_instructions: row.get(9)?,
+                default_payment_terms: row.get(10)?,
+                default_tax_rate: row.get(11)?,
+            })
+        })
+    }
+
+    /// Update invoice settings.
+    pub fn set_invoice_settings(&self, settings: &InvoiceSettings) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invoice_settings SET
+                business_name = ?1,
+                address_street = ?2,
+                address_city = ?3,
+                address_state = ?4,
+                address_postal = ?5,
+                address_country = ?6,
+                email = ?7,
+                phone = ?8,
+                tax_id = ?9,
+                payment_instructions = ?10,
+                default_payment_terms = ?11,
+                default_tax_rate = ?12
+             WHERE id = 1",
+            params![
+                settings.business_name,
+                settings.address_street,
+                settings.address_city,
+                settings.address_state,
+                settings.address_postal,
+                settings.address_country,
+                settings.email,
+                settings.phone,
+                settings.tax_id,
+                settings.payment_instructions,
+                settings.default_payment_terms,
+                settings.default_tax_rate,
+            ],
+        )?;
+        Ok(())
+    }
+
+    // === Client Methods ===
+
+    /// Add a new client.
+    pub fn add_client(&self, client: &Client) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO clients (name, contact_person, address_street, address_city,
+                                  address_state, address_postal, address_country, email)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                client.name,
+                client.contact_person,
+                client.address_street,
+                client.address_city,
+                client.address_state,
+                client.address_postal,
+                client.address_country,
+                client.email,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get a client by ID.
+    pub fn get_client(&self, id: i64) -> Result<Option<Client>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, contact_person, address_street, address_city,
+                    address_state, address_postal, address_country, email
+             FROM clients WHERE id = ?1",
+        )?;
+
+        stmt.query_row(params![id], |row| {
+            Ok(Client {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                contact_person: row.get(2)?,
+                address_street: row.get(3)?,
+                address_city: row.get(4)?,
+                address_state: row.get(5)?,
+                address_postal: row.get(6)?,
+                address_country: row.get(7)?,
+                email: row.get(8)?,
+            })
+        })
+        .optional()
+    }
+
+    /// List all clients.
+    pub fn list_clients(&self) -> Result<Vec<Client>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, contact_person, address_street, address_city,
+                    address_state, address_postal, address_country, email
+             FROM clients ORDER BY name",
+        )?;
+
+        let clients = stmt.query_map([], |row| {
+            Ok(Client {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                contact_person: row.get(2)?,
+                address_street: row.get(3)?,
+                address_city: row.get(4)?,
+                address_state: row.get(5)?,
+                address_postal: row.get(6)?,
+                address_country: row.get(7)?,
+                email: row.get(8)?,
+            })
+        })?;
+
+        clients.collect()
+    }
+
+    /// Update a client.
+    pub fn update_client(&self, client: &Client) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE clients SET
+                name = ?1,
+                contact_person = ?2,
+                address_street = ?3,
+                address_city = ?4,
+                address_state = ?5,
+                address_postal = ?6,
+                address_country = ?7,
+                email = ?8
+             WHERE id = ?9",
+            params![
+                client.name,
+                client.contact_person,
+                client.address_street,
+                client.address_city,
+                client.address_state,
+                client.address_postal,
+                client.address_country,
+                client.email,
+                client.id,
+            ],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Delete a client.
+    pub fn delete_client(&self, id: i64) -> Result<bool> {
+        let rows = self
+            .conn
+            .execute("DELETE FROM clients WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    // === Invoice Record Methods ===
+
+    /// Get the next invoice number.
+    pub fn get_next_invoice_number(&self) -> Result<i64> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COALESCE(MAX(invoice_number), 0) + 1 FROM invoices")?;
+        stmt.query_row([], |row| row.get(0))
+    }
+
+    /// Record a generated invoice.
+    pub fn record_invoice(&self, invoice: &Invoice) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                   subtotal, tax_rate, tax_amount, total, file_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                invoice.invoice_number,
+                invoice.client_id,
+                invoice.date_issued,
+                invoice.due_date,
+                invoice.subtotal,
+                invoice.tax_rate,
+                invoice.tax_amount,
+                invoice.total,
+                invoice.file_path,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// List all recorded invoices.
+    pub fn list_invoices(&self) -> Result<Vec<Invoice>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, invoice_number, client_id, date_issued, due_date,
+                    subtotal, tax_rate, tax_amount, total, file_path
+             FROM invoices ORDER BY invoice_number DESC",
+        )?;
+
+        let invoices = stmt.query_map([], |row| {
+            Ok(Invoice {
+                id: row.get(0)?,
+                invoice_number: row.get(1)?,
+                client_id: row.get(2)?,
+                date_issued: row.get(3)?,
+                due_date: row.get(4)?,
+                subtotal: row.get(5)?,
+                tax_rate: row.get(6)?,
+                tax_amount: row.get(7)?,
+                total: row.get(8)?,
+                file_path: row.get(9)?,
+            })
+        })?;
+
+        invoices.collect()
     }
 }

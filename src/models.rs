@@ -114,3 +114,165 @@ pub fn init_pomodoro_db(conn: &Connection) -> Result<()> {
     )?;
     Ok(())
 }
+
+/// Invoice settings (your business info)
+#[derive(Debug, Clone, Default)]
+pub struct InvoiceSettings {
+    pub business_name: String,
+    pub address_street: String,
+    pub address_city: String,
+    pub address_state: String,
+    pub address_postal: String,
+    pub address_country: String,
+    pub email: String,
+    pub phone: String,
+    pub tax_id: String,
+    pub payment_instructions: String,
+    pub default_payment_terms: String,
+    pub default_tax_rate: f64,
+}
+
+impl InvoiceSettings {
+    pub fn formatted_address(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.address_street.is_empty() {
+            parts.push(self.address_street.clone());
+        }
+        let city_state_postal = [
+            self.address_city.as_str(),
+            self.address_state.as_str(),
+            self.address_postal.as_str(),
+        ]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+        if !city_state_postal.is_empty() {
+            parts.push(city_state_postal);
+        }
+        if !self.address_country.is_empty() {
+            parts.push(self.address_country.clone());
+        }
+        parts.join("\n")
+    }
+}
+
+pub fn init_invoice_settings_db(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS invoice_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            business_name TEXT NOT NULL DEFAULT '',
+            address_street TEXT NOT NULL DEFAULT '',
+            address_city TEXT NOT NULL DEFAULT '',
+            address_state TEXT NOT NULL DEFAULT '',
+            address_postal TEXT NOT NULL DEFAULT '',
+            address_country TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            tax_id TEXT NOT NULL DEFAULT '',
+            payment_instructions TEXT NOT NULL DEFAULT '',
+            default_payment_terms TEXT NOT NULL DEFAULT 'Due on receipt',
+            default_tax_rate REAL NOT NULL DEFAULT 0.0
+        )",
+        params![],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO invoice_settings (id) VALUES (1)",
+        params![],
+    )?;
+    Ok(())
+}
+
+/// Client information for invoicing
+#[derive(Debug, Clone, Default)]
+pub struct Client {
+    pub id: i64,
+    pub name: String,
+    pub contact_person: String,
+    pub address_street: String,
+    pub address_city: String,
+    pub address_state: String,
+    pub address_postal: String,
+    pub address_country: String,
+    pub email: String,
+}
+
+impl Client {
+    pub fn formatted_address(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.address_street.is_empty() {
+            parts.push(self.address_street.clone());
+        }
+        let city_state_postal = [
+            self.address_city.as_str(),
+            self.address_state.as_str(),
+            self.address_postal.as_str(),
+        ]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+        if !city_state_postal.is_empty() {
+            parts.push(city_state_postal);
+        }
+        if !self.address_country.is_empty() {
+            parts.push(self.address_country.clone());
+        }
+        parts.join("\n")
+    }
+}
+
+pub fn init_clients_db(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS clients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            contact_person TEXT NOT NULL DEFAULT '',
+            address_street TEXT NOT NULL DEFAULT '',
+            address_city TEXT NOT NULL DEFAULT '',
+            address_state TEXT NOT NULL DEFAULT '',
+            address_postal TEXT NOT NULL DEFAULT '',
+            address_country TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT ''
+        )",
+        params![],
+    )?;
+    Ok(())
+}
+
+/// Invoice record for tracking issued invoices
+#[derive(Debug, Clone)]
+pub struct Invoice {
+    pub id: i64,
+    pub invoice_number: i64,
+    pub client_id: Option<i64>,
+    pub date_issued: String,
+    pub due_date: String,
+    pub subtotal: f64,
+    pub tax_rate: f64,
+    pub tax_amount: f64,
+    pub total: f64,
+    pub file_path: String,
+}
+
+pub fn init_invoices_db(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_number INTEGER NOT NULL UNIQUE,
+            client_id INTEGER,
+            date_issued TEXT NOT NULL,
+            due_date TEXT NOT NULL,
+            subtotal REAL NOT NULL,
+            tax_rate REAL NOT NULL,
+            tax_amount REAL NOT NULL,
+            total REAL NOT NULL,
+            file_path TEXT NOT NULL,
+            FOREIGN KEY (client_id) REFERENCES clients(id)
+        )",
+        params![],
+    )?;
+    Ok(())
+}
