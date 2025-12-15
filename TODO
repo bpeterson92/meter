@@ -7,3 +7,10 @@
     - Use Left/Right arrow keys to dive into the submenu
 [ ] Remove: j/k navigation in TUI, arrow keys work fine...
 [ ] Global hotkey does not trigger Start correctly (momentary vs latchnig)
+[ ] Feature: Pomodoro timer
+    - Track time as usual simultaneously
+    - Being able to define the following:
+        - Pomodoro chunk: W work period, SB = short break (minutes)
+        - N = number of pomodoro chunks before a long break (LB)
+        - Default values: W = 45, SB = 15, N = 4, LB = 60
+    - Do not automatically resume the timer at the end of breaks, just notify it is complete.
