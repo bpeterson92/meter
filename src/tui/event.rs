@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::app::{App, InputMode, InvoiceMode, Message, Screen};
+use super::app::{App, InputMode, InvoiceMode, Message, PomodoroField, PomodoroState, Screen};
 
 /// Map key events to messages based on current app state
 pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
@@ -79,6 +79,20 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
                 _ => None,
             };
         }
+        InputMode::EditingPomodoroWork
+        | InputMode::EditingPomodoroShortBreak
+        | InputMode::EditingPomodoroLongBreak
+        | InputMode::EditingPomodoroCycles => {
+            return match key.code {
+                KeyCode::Enter => Some(Message::SavePomodoroConfig),
+                KeyCode::Esc => Some(Message::CancelPomodoroEdit),
+                KeyCode::Tab => Some(Message::PomodoroNextField),
+                KeyCode::BackTab => Some(Message::PomodoroPrevField),
+                KeyCode::Backspace => Some(Message::PomodoroFieldBackspace),
+                KeyCode::Char(c) => Some(Message::PomodoroFieldInput(c)),
+                _ => None,
+            };
+        }
         InputMode::Normal => {}
     }
 
@@ -89,6 +103,7 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('2') => return Some(Message::SwitchScreen(Screen::Entries)),
         KeyCode::Char('3') => return Some(Message::SwitchScreen(Screen::Invoice)),
         KeyCode::Char('4') => return Some(Message::SwitchScreen(Screen::Projects)),
+        KeyCode::Char('5') => return Some(Message::SwitchScreen(Screen::Pomodoro)),
         _ => {}
     }
 
@@ -98,10 +113,37 @@ pub fn handle_key(key: KeyEvent, app: &App) -> Option<Message> {
         Screen::Entries => handle_entries_keys(key, app),
         Screen::Invoice => handle_invoice_keys(key, app),
         Screen::Projects => handle_projects_keys(key, app),
+        Screen::Pomodoro => handle_pomodoro_keys(key, app),
     }
 }
 
 fn handle_timer_keys(key: KeyEvent, app: &App) -> Option<Message> {
+    // Handle Pomodoro-specific states first
+    match app.pomodoro_state {
+        PomodoroState::WorkComplete => {
+            // Only Space starts break
+            if key.code == KeyCode::Char(' ') {
+                return Some(Message::AcknowledgePomodoro);
+            }
+            return None;
+        }
+        PomodoroState::BreakComplete => {
+            // 's' or Space acknowledges and allows starting new timer
+            if key.code == KeyCode::Char('s')
+                || key.code == KeyCode::Char('S')
+                || key.code == KeyCode::Char(' ')
+            {
+                return Some(Message::AcknowledgePomodoro);
+            }
+            return None;
+        }
+        PomodoroState::OnBreak => {
+            // During break, no timer actions allowed
+            return None;
+        }
+        _ => {}
+    }
+
     match key.code {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             if app.active_entry.is_some() {
@@ -109,6 +151,10 @@ fn handle_timer_keys(key: KeyEvent, app: &App) -> Option<Message> {
             } else {
                 Some(Message::EnterInputMode(InputMode::EditingProject))
             }
+        }
+        KeyCode::Char('p') | KeyCode::Char('P') => {
+            // Toggle Pomodoro mode
+            Some(Message::TogglePomodoroMode)
         }
         KeyCode::Enter => {
             if app.active_entry.is_none() {
@@ -226,6 +272,26 @@ fn handle_projects_keys(key: KeyEvent, app: &App) -> Option<Message> {
             } else {
                 None
             }
+        }
+        _ => None,
+    }
+}
+
+fn handle_pomodoro_keys(key: KeyEvent, app: &App) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Message::PomodoroNextField),
+        KeyCode::Char('k') | KeyCode::Up => Some(Message::PomodoroPrevField),
+        KeyCode::Char('p') | KeyCode::Char('P') => Some(Message::TogglePomodoroMode),
+        KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+            // Start editing the selected field
+            let mode = match app.pomodoro_field {
+                PomodoroField::Enabled => return Some(Message::TogglePomodoroMode),
+                PomodoroField::WorkDuration => InputMode::EditingPomodoroWork,
+                PomodoroField::ShortBreak => InputMode::EditingPomodoroShortBreak,
+                PomodoroField::LongBreak => InputMode::EditingPomodoroLongBreak,
+                PomodoroField::Cycles => InputMode::EditingPomodoroCycles,
+            };
+            Some(Message::EnterInputMode(mode))
         }
         _ => None,
     }

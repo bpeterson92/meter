@@ -1,9 +1,10 @@
-use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
 use std::collections::HashMap;
 
 use crate::db::Db;
 use crate::invoice::{ProjectRate, write_invoice};
-use crate::models::{Entry, Project};
+use crate::models::{Entry, PomodoroConfig, Project};
+use crate::notification;
 
 /// The active screen/view in the TUI
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -13,6 +14,7 @@ pub enum Screen {
     Entries,
     Invoice,
     Projects,
+    Pomodoro,
 }
 
 /// Running state of the application
@@ -48,6 +50,11 @@ pub enum InputMode {
     // Project rate editing modes
     EditingRate,
     EditingCurrency,
+    // Pomodoro editing modes
+    EditingPomodoroWork,
+    EditingPomodoroShortBreak,
+    EditingPomodoroLongBreak,
+    EditingPomodoroCycles,
 }
 
 /// Which field is selected in the edit entry dialog
@@ -58,6 +65,28 @@ pub enum EditField {
     Description,
     Start,
     End,
+}
+
+/// Pomodoro timer state
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum PomodoroState {
+    #[default]
+    Idle, // No timer running or Pomodoro disabled
+    Working,       // In work period
+    WorkComplete,  // Work done, waiting for user to start break
+    OnBreak,       // In break period
+    BreakComplete, // Break done, waiting for user to resume work
+}
+
+/// Which field is selected in the Pomodoro config screen
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum PomodoroField {
+    #[default]
+    Enabled,
+    WorkDuration,
+    ShortBreak,
+    LongBreak,
+    Cycles,
 }
 
 /// Main application state
@@ -109,6 +138,22 @@ pub struct App {
 
     // Project rates cache for invoice
     pub project_rates: HashMap<String, ProjectRate>,
+
+    // Pomodoro state
+    pub pomodoro_config: PomodoroConfig,
+    pub pomodoro_state: PomodoroState,
+    pub pomodoro_cycles_completed: u32,
+    pub pomodoro_interval_start: Option<DateTime<Utc>>,
+    /// Stores the project/description for resuming after break
+    pub pomodoro_last_project: Option<String>,
+    pub pomodoro_last_description: Option<String>,
+
+    // Pomodoro config editing state
+    pub pomodoro_field: PomodoroField,
+    pub pomodoro_work_input: String,
+    pub pomodoro_short_break_input: String,
+    pub pomodoro_long_break_input: String,
+    pub pomodoro_cycles_input: String,
 }
 
 /// All possible application messages/events
@@ -179,6 +224,19 @@ pub enum Message {
     SaveProjectRate,
     CancelEditRate,
     ClearProjectRate(i64),
+
+    // Pomodoro actions
+    TogglePomodoroMode,
+    AcknowledgePomodoro, // User presses key to start break or resume work
+    RefreshPomodoroConfig,
+
+    // Pomodoro config screen actions
+    PomodoroNextField,
+    PomodoroPrevField,
+    PomodoroFieldInput(char),
+    PomodoroFieldBackspace,
+    SavePomodoroConfig,
+    CancelPomodoroEdit,
 }
 
 impl App {
@@ -187,6 +245,14 @@ impl App {
         app.description_input = "Work session".to_string();
         app.refresh_entries(db);
         app.refresh_active_timer(db);
+        app.refresh_pomodoro_config(db);
+
+        // If there's an active timer and Pomodoro is enabled, set state to Working
+        if app.active_entry.is_some() && app.pomodoro_config.enabled {
+            app.pomodoro_state = PomodoroState::Working;
+            app.pomodoro_interval_start = app.active_entry.as_ref().map(|e| e.start);
+        }
+
         app
     }
 
@@ -204,6 +270,10 @@ impl App {
                 if screen == Screen::Projects {
                     self.projects = db.list_projects().unwrap_or_default();
                 }
+                if screen == Screen::Pomodoro {
+                    self.refresh_pomodoro_config(db);
+                    self.load_pomodoro_inputs();
+                }
                 None
             }
             Message::Quit => {
@@ -218,10 +288,21 @@ impl App {
                         .start_timer(&self.project_input, &self.description_input)
                         .is_ok()
                     {
+                        // Store project info for Pomodoro resume
+                        self.pomodoro_last_project = Some(self.project_input.clone());
+                        self.pomodoro_last_description = Some(self.description_input.clone());
+
                         self.project_input.clear();
                         self.description_input = "Work session".to_string();
                         self.status_message = Some("Timer started".to_string());
                         self.input_mode = InputMode::Normal;
+
+                        // If Pomodoro enabled, set state to Working
+                        if self.pomodoro_config.enabled {
+                            self.pomodoro_state = PomodoroState::Working;
+                            self.pomodoro_interval_start = Some(Utc::now());
+                        }
+
                         return Some(Message::RefreshActiveTimer);
                     }
                 }
@@ -232,6 +313,12 @@ impl App {
                     if db.stop_active_timer().is_ok() {
                         self.active_entry = None;
                         self.status_message = Some("Timer stopped".to_string());
+
+                        // Reset Pomodoro state
+                        self.pomodoro_state = PomodoroState::Idle;
+                        self.pomodoro_interval_start = None;
+                        self.pomodoro_cycles_completed = 0;
+
                         return Some(Message::RefreshEntries);
                     }
                 }
@@ -534,6 +621,50 @@ impl App {
                 // Refresh active timer from database to detect external changes
                 // (e.g., timer started/stopped from menu bar)
                 self.refresh_active_timer(db);
+
+                // Check Pomodoro state transitions
+                if self.pomodoro_config.enabled {
+                    if let Some(interval_start) = self.pomodoro_interval_start {
+                        let elapsed_secs = (Utc::now() - interval_start).num_seconds();
+
+                        match self.pomodoro_state {
+                            PomodoroState::Working => {
+                                let work_secs = self.pomodoro_config.work_duration as i64 * 60;
+                                if elapsed_secs >= work_secs {
+                                    // Work period complete - stop the timer
+                                    if let Some(ref entry) = self.active_entry {
+                                        self.pomodoro_last_project = Some(entry.project.clone());
+                                        self.pomodoro_last_description =
+                                            Some(entry.description.clone());
+                                    }
+                                    let _ = db.stop_active_timer();
+                                    self.active_entry = None;
+                                    self.pomodoro_state = PomodoroState::WorkComplete;
+                                    self.pomodoro_interval_start = None;
+                                    notification::notify_work_complete();
+                                    self.status_message = Some(
+                                        "Work period complete! Press [Space] to start break"
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                            PomodoroState::OnBreak => {
+                                let break_secs = self.get_current_break_duration() as i64 * 60;
+                                if elapsed_secs >= break_secs {
+                                    // Break complete
+                                    self.pomodoro_state = PomodoroState::BreakComplete;
+                                    self.pomodoro_interval_start = None;
+                                    notification::notify_break_complete();
+                                    self.status_message = Some(
+                                        "Break complete! Press [s] to resume work".to_string(),
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 None
             }
 
@@ -629,6 +760,179 @@ impl App {
                         return Some(Message::RefreshProjects);
                     }
                 }
+                None
+            }
+
+            // Pomodoro actions
+            Message::TogglePomodoroMode => {
+                self.pomodoro_config.enabled = !self.pomodoro_config.enabled;
+                let _ = db.set_pomodoro_enabled(self.pomodoro_config.enabled);
+
+                if self.pomodoro_config.enabled {
+                    self.status_message = Some("Pomodoro mode enabled".to_string());
+                    // If timer is already running, set state to Working
+                    if self.active_entry.is_some() {
+                        self.pomodoro_state = PomodoroState::Working;
+                        self.pomodoro_interval_start = Some(Utc::now());
+                    }
+                } else {
+                    self.status_message = Some("Pomodoro mode disabled".to_string());
+                    // Reset Pomodoro state but keep timer running
+                    self.pomodoro_state = PomodoroState::Idle;
+                    self.pomodoro_interval_start = None;
+                    self.pomodoro_cycles_completed = 0;
+                }
+                None
+            }
+
+            Message::AcknowledgePomodoro => {
+                match self.pomodoro_state {
+                    PomodoroState::WorkComplete => {
+                        // Start break
+                        self.pomodoro_state = PomodoroState::OnBreak;
+                        self.pomodoro_interval_start = Some(Utc::now());
+                        let break_type = if self.is_long_break_next() {
+                            "long"
+                        } else {
+                            "short"
+                        };
+                        let break_mins = self.get_current_break_duration();
+                        self.status_message = Some(format!(
+                            "Starting {} break ({} min)",
+                            break_type, break_mins
+                        ));
+                    }
+                    PomodoroState::BreakComplete => {
+                        // Increment cycle count
+                        self.pomodoro_cycles_completed += 1;
+                        if self.pomodoro_cycles_completed
+                            >= self.pomodoro_config.cycles_before_long as u32
+                        {
+                            self.pomodoro_cycles_completed = 0;
+                        }
+
+                        // Return to Idle - user must manually start next work period
+                        self.pomodoro_state = PomodoroState::Idle;
+                        self.pomodoro_interval_start = None;
+
+                        // Pre-fill the project input with the last project
+                        if let Some(ref proj) = self.pomodoro_last_project {
+                            self.project_input = proj.clone();
+                        }
+                        if let Some(ref desc) = self.pomodoro_last_description {
+                            self.description_input = desc.clone();
+                        }
+
+                        self.status_message = Some("Ready to start next work period".to_string());
+                    }
+                    _ => {}
+                }
+                None
+            }
+
+            Message::RefreshPomodoroConfig => {
+                self.refresh_pomodoro_config(db);
+                None
+            }
+
+            // Pomodoro config screen actions
+            Message::PomodoroNextField => {
+                self.pomodoro_field = match self.pomodoro_field {
+                    PomodoroField::Enabled => PomodoroField::WorkDuration,
+                    PomodoroField::WorkDuration => PomodoroField::ShortBreak,
+                    PomodoroField::ShortBreak => PomodoroField::LongBreak,
+                    PomodoroField::LongBreak => PomodoroField::Cycles,
+                    PomodoroField::Cycles => PomodoroField::Enabled,
+                };
+                self.input_mode = match self.pomodoro_field {
+                    PomodoroField::Enabled => InputMode::Normal,
+                    PomodoroField::WorkDuration => InputMode::EditingPomodoroWork,
+                    PomodoroField::ShortBreak => InputMode::EditingPomodoroShortBreak,
+                    PomodoroField::LongBreak => InputMode::EditingPomodoroLongBreak,
+                    PomodoroField::Cycles => InputMode::EditingPomodoroCycles,
+                };
+                None
+            }
+            Message::PomodoroPrevField => {
+                self.pomodoro_field = match self.pomodoro_field {
+                    PomodoroField::Enabled => PomodoroField::Cycles,
+                    PomodoroField::WorkDuration => PomodoroField::Enabled,
+                    PomodoroField::ShortBreak => PomodoroField::WorkDuration,
+                    PomodoroField::LongBreak => PomodoroField::ShortBreak,
+                    PomodoroField::Cycles => PomodoroField::LongBreak,
+                };
+                self.input_mode = match self.pomodoro_field {
+                    PomodoroField::Enabled => InputMode::Normal,
+                    PomodoroField::WorkDuration => InputMode::EditingPomodoroWork,
+                    PomodoroField::ShortBreak => InputMode::EditingPomodoroShortBreak,
+                    PomodoroField::LongBreak => InputMode::EditingPomodoroLongBreak,
+                    PomodoroField::Cycles => InputMode::EditingPomodoroCycles,
+                };
+                None
+            }
+            Message::PomodoroFieldInput(c) => {
+                if c.is_ascii_digit() {
+                    match self.pomodoro_field {
+                        PomodoroField::WorkDuration => self.pomodoro_work_input.push(c),
+                        PomodoroField::ShortBreak => self.pomodoro_short_break_input.push(c),
+                        PomodoroField::LongBreak => self.pomodoro_long_break_input.push(c),
+                        PomodoroField::Cycles => self.pomodoro_cycles_input.push(c),
+                        _ => {}
+                    }
+                }
+                None
+            }
+            Message::PomodoroFieldBackspace => {
+                match self.pomodoro_field {
+                    PomodoroField::WorkDuration => {
+                        self.pomodoro_work_input.pop();
+                    }
+                    PomodoroField::ShortBreak => {
+                        self.pomodoro_short_break_input.pop();
+                    }
+                    PomodoroField::LongBreak => {
+                        self.pomodoro_long_break_input.pop();
+                    }
+                    PomodoroField::Cycles => {
+                        self.pomodoro_cycles_input.pop();
+                    }
+                    _ => {}
+                }
+                None
+            }
+            Message::SavePomodoroConfig => {
+                // Parse inputs and update config
+                if let Ok(work) = self.pomodoro_work_input.parse::<i32>() {
+                    if work > 0 {
+                        self.pomodoro_config.work_duration = work;
+                    }
+                }
+                if let Ok(short) = self.pomodoro_short_break_input.parse::<i32>() {
+                    if short > 0 {
+                        self.pomodoro_config.short_break = short;
+                    }
+                }
+                if let Ok(long) = self.pomodoro_long_break_input.parse::<i32>() {
+                    if long > 0 {
+                        self.pomodoro_config.long_break = long;
+                    }
+                }
+                if let Ok(cycles) = self.pomodoro_cycles_input.parse::<i32>() {
+                    if cycles > 0 {
+                        self.pomodoro_config.cycles_before_long = cycles;
+                    }
+                }
+
+                let _ = db.set_pomodoro_config(&self.pomodoro_config);
+                self.status_message = Some("Pomodoro settings saved".to_string());
+                self.input_mode = InputMode::Normal;
+                self.pomodoro_field = PomodoroField::Enabled;
+                None
+            }
+            Message::CancelPomodoroEdit => {
+                self.load_pomodoro_inputs();
+                self.input_mode = InputMode::Normal;
+                self.pomodoro_field = PomodoroField::Enabled;
                 None
             }
         }
@@ -749,5 +1053,45 @@ impl App {
 
     pub fn get_selected_entry(&self) -> Option<&Entry> {
         self.entries.get(self.selected_entry_index)
+    }
+
+    fn refresh_pomodoro_config(&mut self, db: &Db) {
+        self.pomodoro_config = db.get_pomodoro_config().unwrap_or_default();
+    }
+
+    /// Check if the next break should be a long break
+    pub fn is_long_break_next(&self) -> bool {
+        (self.pomodoro_cycles_completed + 1) >= self.pomodoro_config.cycles_before_long as u32
+    }
+
+    /// Get the duration of the current/next break in minutes
+    pub fn get_current_break_duration(&self) -> i32 {
+        if self.is_long_break_next() {
+            self.pomodoro_config.long_break
+        } else {
+            self.pomodoro_config.short_break
+        }
+    }
+
+    /// Get remaining time in current Pomodoro interval (work or break) in seconds
+    pub fn get_pomodoro_remaining_secs(&self) -> Option<i64> {
+        let interval_start = self.pomodoro_interval_start?;
+        let elapsed_secs = (Utc::now() - interval_start).num_seconds();
+
+        let total_secs = match self.pomodoro_state {
+            PomodoroState::Working => self.pomodoro_config.work_duration as i64 * 60,
+            PomodoroState::OnBreak => self.get_current_break_duration() as i64 * 60,
+            _ => return None,
+        };
+
+        Some((total_secs - elapsed_secs).max(0))
+    }
+
+    /// Load Pomodoro config values into input fields
+    fn load_pomodoro_inputs(&mut self) {
+        self.pomodoro_work_input = self.pomodoro_config.work_duration.to_string();
+        self.pomodoro_short_break_input = self.pomodoro_config.short_break.to_string();
+        self.pomodoro_long_break_input = self.pomodoro_config.long_break.to_string();
+        self.pomodoro_cycles_input = self.pomodoro_config.cycles_before_long.to_string();
     }
 }

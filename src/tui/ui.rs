@@ -6,8 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::app::{App, EditField, InputMode, Screen};
-use super::views::{draw_entries, draw_invoice, draw_projects, draw_timer};
+use super::app::{App, EditField, InputMode, PomodoroState, Screen};
+use super::views::{draw_entries, draw_invoice, draw_pomodoro, draw_projects, draw_timer};
 
 /// Main draw function that delegates to screen-specific views
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -27,6 +27,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Entries => draw_entries(frame, app, chunks[1]),
         Screen::Invoice => draw_invoice(frame, app, chunks[1]),
         Screen::Projects => draw_projects(frame, app, chunks[1]),
+        Screen::Pomodoro => draw_pomodoro(frame, app, chunks[1]),
     }
 
     draw_footer(frame, app, chunks[2]);
@@ -94,6 +95,16 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Span::styled(" [4] Projects ", Style::default().fg(Color::DarkGray))
         },
+        if app.current_screen == Screen::Pomodoro {
+            Span::styled(
+                " [5] Pomodoro ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" [5] Pomodoro ", Style::default().fg(Color::DarkGray))
+        },
     ];
 
     let header = Paragraph::new(Line::from(tabs))
@@ -110,10 +121,18 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = match app.current_screen {
         Screen::Timer => {
-            if app.active_entry.is_some() {
-                "[s] Stop timer  [?] Help  [q] Quit"
-            } else {
-                "[s] Start timer  [?] Help  [q] Quit"
+            // Pomodoro-specific help text
+            match app.pomodoro_state {
+                PomodoroState::WorkComplete => "[Space] Start break  [?] Help  [q] Quit",
+                PomodoroState::BreakComplete => "[s] Resume work  [?] Help  [q] Quit",
+                PomodoroState::OnBreak => "[?] Help  [q] Quit",
+                _ => {
+                    if app.active_entry.is_some() {
+                        "[s] Stop  [p] Pomodoro  [?] Help  [q] Quit"
+                    } else {
+                        "[s] Start  [p] Pomodoro  [?] Help  [q] Quit"
+                    }
+                }
             }
         }
         Screen::Entries => {
@@ -121,6 +140,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
         Screen::Invoice => "[j/k] Select  [Enter] Generate  [?] Help  [q] Quit",
         Screen::Projects => "[j/k] Navigate  [e] Edit rate  [c] Clear rate  [?] Help  [q] Quit",
+        Screen::Pomodoro => {
+            "[Tab] Next field  [Enter] Toggle/Save  [Esc] Cancel  [?] Help  [q] Quit"
+        }
     };
 
     let status = if let Some(msg) = &app.status_message {
@@ -167,6 +189,8 @@ fn draw_help_overlay(frame: &mut Frame, _app: &App) {
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from("  s        - Start/Stop timer"),
+        Line::from("  p        - Toggle Pomodoro mode"),
+        Line::from("  Space    - Acknowledge Pomodoro transition"),
         Line::from("  Tab      - Switch input field"),
         Line::from("  Enter    - Confirm and start"),
         Line::from("  Esc      - Cancel input"),

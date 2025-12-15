@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Result, params};
 
-use crate::models::{Entry, Project};
+use crate::models::{Entry, PomodoroConfig, Project};
 
 /// Wrapper around a SQLite connection.
 /// The inner `Connection` is intentionally private; use the `conn()` method to obtain
@@ -362,6 +362,56 @@ impl Db {
         for name in entry_projects {
             self.get_or_create_project(&name)?;
         }
+        Ok(())
+    }
+
+    // === Pomodoro Methods ===
+
+    /// Get the current Pomodoro configuration.
+    pub fn get_pomodoro_config(&self) -> Result<PomodoroConfig> {
+        let mut stmt = self.conn.prepare(
+            "SELECT enabled, work_duration, short_break, long_break, cycles_before_long
+             FROM pomodoro_config WHERE id = 1",
+        )?;
+
+        stmt.query_row([], |row| {
+            Ok(PomodoroConfig {
+                enabled: row.get::<_, i32>(0)? != 0,
+                work_duration: row.get(1)?,
+                short_break: row.get(2)?,
+                long_break: row.get(3)?,
+                cycles_before_long: row.get(4)?,
+            })
+        })
+    }
+
+    /// Update the Pomodoro configuration.
+    pub fn set_pomodoro_config(&self, config: &PomodoroConfig) -> Result<()> {
+        self.conn.execute(
+            "UPDATE pomodoro_config SET
+                enabled = ?1,
+                work_duration = ?2,
+                short_break = ?3,
+                long_break = ?4,
+                cycles_before_long = ?5
+             WHERE id = 1",
+            params![
+                if config.enabled { 1 } else { 0 },
+                config.work_duration,
+                config.short_break,
+                config.long_break,
+                config.cycles_before_long,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Toggle Pomodoro enabled state.
+    pub fn set_pomodoro_enabled(&self, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE pomodoro_config SET enabled = ?1 WHERE id = 1",
+            params![if enabled { 1 } else { 0 }],
+        )?;
         Ok(())
     }
 }

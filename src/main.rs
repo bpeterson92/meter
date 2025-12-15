@@ -7,6 +7,7 @@ mod cli;
 mod db;
 mod invoice;
 mod models;
+mod notification;
 mod tui;
 
 use cli::{Cli, Commands};
@@ -34,6 +35,7 @@ fn main() {
     // Create tables if not present
     models::init_db(db.conn()).expect("Failed to init DB");
     models::init_projects_db(db.conn()).expect("Failed to init projects DB");
+    models::init_pomodoro_db(db.conn()).expect("Failed to init Pomodoro DB");
 
     // Sync existing entry projects to projects table
     db.sync_projects_from_entries()
@@ -194,6 +196,63 @@ fn main() {
                     println!("{:<30} {:<15}", proj.name, rate_str);
                 }
             }
+        }
+        Commands::Pomodoro {
+            enable,
+            disable,
+            work,
+            short_break,
+            long_break,
+            cycles,
+        } => {
+            let mut config = db
+                .get_pomodoro_config()
+                .expect("Failed to get Pomodoro config");
+
+            // Check if any arguments were provided
+            let has_changes = *enable
+                || *disable
+                || work.is_some()
+                || short_break.is_some()
+                || long_break.is_some()
+                || cycles.is_some();
+
+            if has_changes {
+                // Update config based on arguments
+                if *enable {
+                    config.enabled = true;
+                }
+                if *disable {
+                    config.enabled = false;
+                }
+                if let Some(w) = work {
+                    config.work_duration = *w;
+                }
+                if let Some(sb) = short_break {
+                    config.short_break = *sb;
+                }
+                if let Some(lb) = long_break {
+                    config.long_break = *lb;
+                }
+                if let Some(c) = cycles {
+                    config.cycles_before_long = *c;
+                }
+
+                db.set_pomodoro_config(&config)
+                    .expect("Failed to update Pomodoro config");
+                println!("Pomodoro configuration updated");
+            }
+
+            // Always display current config
+            println!("\nPomodoro Settings:");
+            println!(
+                "  Enabled:           {}",
+                if config.enabled { "Yes" } else { "No" }
+            );
+            println!("  Work duration:     {} minutes", config.work_duration);
+            println!("  Short break:       {} minutes", config.short_break);
+            println!("  Long break:        {} minutes", config.long_break);
+            println!("  Cycles before long break: {}", config.cycles_before_long);
         }
     }
 }

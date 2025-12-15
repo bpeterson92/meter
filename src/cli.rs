@@ -77,4 +77,31 @@ pub enum Commands {
 
     /// List all projects with their rates
     Projects,
+
+    /// Configure Pomodoro timer settings
+    Pomodoro {
+        /// Enable Pomodoro mode
+        #[arg(short, long)]
+        enable: bool,
+
+        /// Disable Pomodoro mode
+        #[arg(short, long, conflicts_with = "enable")]
+        disable: bool,
+
+        /// Work period duration in minutes (default: 45)
+        #[arg(short, long)]
+        work: Option<i32>,
+
+        /// Short break duration in minutes (default: 15)
+        #[arg(short, long)]
+        short_break: Option<i32>,
+
+        /// Long break duration in minutes (default: 60)
+        #[arg(short, long)]
+        long_break: Option<i32>,
+
+        /// Number of work cycles before a long break (default: 4)
+        #[arg(short, long)]
+        cycles: Option<i32>,
+    },
 }

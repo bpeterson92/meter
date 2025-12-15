@@ -14,3 +14,4 @@
         - N = number of pomodoro chunks before a long break (LB)
         - Default values: W = 45, SB = 15, N = 4, LB = 60
     - Do not automatically resume the timer at the end of breaks, just notify it is complete.
+[ ] Fix: Menubar recent projects has duplicate entries

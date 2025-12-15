@@ -41,7 +41,8 @@ cp -r ./target/release/Meter.app /Applications/
 
 The menu bar app:
 - Shows a progress ring icon that fills as time passes (cycles every hour)
-- Global hotkey `Cmd+Shift+T` to toggle timer from anywhere
+- Global hotkey `Cmd+Control+T` to toggle timer from anywhere
+- Pomodoro mode support with visual indicators
 - Runs in the background (no Dock icon, no Cmd+Tab)
 - Start on login: System Settings > General > Login Items > add Meter
 
@@ -72,14 +73,18 @@ meter tui
 - **Timer** (`1`) – start/stop timers with live elapsed time display
 - **Entries** (`2`) – view, delete, and bill time entries
 - **Invoice** (`3`) – generate invoices by month or custom selection
+- **Projects** (`4`) – manage project rates
+- **Pomodoro** (`5`) – configure Pomodoro timer settings
 
 **Key Bindings:**
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
-| `1/2/3` | Switch screens |
+| `1-5` | Switch screens |
 | `?` | Toggle help |
 | `s` | Start/stop timer (Timer screen) |
+| `p` | Toggle Pomodoro mode (Timer screen) |
+| `Space` | Acknowledge Pomodoro transition |
 | `j/k` | Navigate up/down |
 | `d` | Delete entry (Entries screen) |
 | `b` | Mark as billed (Entries screen) |
@@ -127,6 +132,18 @@ meter rate --project "Acme Corp"                  # view rate
 
 # List all projects with their current rates
 meter projects
+
+# View Pomodoro settings
+meter pomodoro
+
+# Enable Pomodoro mode
+meter pomodoro --enable
+
+# Disable Pomodoro mode
+meter pomodoro --disable
+
+# Configure Pomodoro durations (in minutes)
+meter pomodoro --work 25 --short-break 5 --long-break 15 --cycles 4
 ```
 
 #### Project Rate Management
@@ -145,6 +162,22 @@ Examples:
 `meter unbill` reverts the billed status of entries.  
 - `meter unbill --id 10` unbills entry 10.  
 - `meter unbill` unbills every entry that is currently marked as billed.
+
+#### Pomodoro Timer
+
+`meter pomodoro` configures the Pomodoro timer mode. When enabled, work periods automatically pause after the configured duration, prompting you to take a break.
+
+**Settings:**
+- `--work` – Work period duration in minutes (default: 45)
+- `--short-break` – Short break duration in minutes (default: 15)
+- `--long-break` – Long break duration in minutes (default: 60)
+- `--cycles` – Number of work cycles before a long break (default: 4)
+
+**Behavior:**
+- Work period ends → timer pauses → notification
+- Press Space (TUI) or hotkey (menubar) to start break
+- Break ends → notification → press to resume work
+- Break time is NOT included in billable hours
 
 ## Data Storage
 
